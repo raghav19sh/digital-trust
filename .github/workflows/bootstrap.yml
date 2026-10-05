@@ -1,0 +1,41 @@
+name: Bootstrap source
+
+on:
+  push:
+    paths:
+      - ".digital-trust-source.b64"
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract source archive
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          raw = Path(".digital-trust-source.b64").read_text()
+          Path("/tmp/digital-trust-source.zip").write_bytes(base64.b64decode(raw))
+          PY
+          rm -rf /tmp/digital-trust-source
+          mkdir -p /tmp/digital-trust-source
+          unzip -oq /tmp/digital-trust-source.zip -d /tmp/digital-trust-source
+          cp -a /tmp/digital-trust-source/. .
+          rm -f .digital-trust-source.b64
+
+      - name: Commit materialized source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit."
+          else
+            git commit -m "Materialize DigiTrust source"
+            git push origin HEAD:main
+          fi
