@@ -137,7 +137,12 @@ async function fetchArticle(input: string) {
   throw new Error("Too many redirects.");
 }
 
-function extractClaims(text: string) {\n  const sentences = text.split(/(?<=[.!?])\\s+/).map((x) => x.trim()).filter((x) => x.length > 55);\n  return sentences.slice(0, 5).map((x, i) => ({ id: `C${String(i + 1).padStart(2, "0")}`, text: x.slice(0, 280), confidence: Math.min(98, Math.round(65 + x.length / 10 + (/[0-9%]|\\b(is|are|was|were|will|has|have)\\b/i.test(x) ? 15 : 0))) }));\n}\n\nfunction language(text: string) {
+function extractClaims(text: string) {
+  const sentences = text.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter((x) => x.length > 55);
+  return sentences.slice(0, 5).map((x, i) => ({ id: `C${String(i + 1).padStart(2, "0")}`, text: x.slice(0, 280), confidence: Math.min(98, Math.round(65 + x.length / 10 + (/[0-9%]|\b(is|are|was|were|will|has|have)\b/i.test(x) ? 15 : 0))) }));
+}
+
+function language(text: string) {
   const tests: Array<[string, RegExp, number, string]> = [
     ["clickbait", /\b(shocking|you won't believe|must see|exposed|bombshell|going viral|urgent)\b/gi, 6, "Sensational phrasing can pressure readers to react before checking evidence."],
     ["emotional manipulation", /\b(outrage|disgusting|evil|traitor|corrupt|terrifying|horrific|insane|idiot|propaganda)\b/gi, 3, "Loaded wording can frame a claim emotionally."],
