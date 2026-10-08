@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
-const HIVE_ENDPOINT = "https://api.thehive.ai/api/v2/task/sync";
+const HIVE_ENDPOINT = "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection";
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
 
@@ -20,13 +20,12 @@ function pct(value: number) {
 }
 
 function collectOutputs(data: any): HiveOutput[] {
-  const outputs: HiveOutput[] = [];
-  for (const item of data?.status ?? []) {
-    for (const output of item?.response?.output ?? []) {
-      if (output && typeof output === "object") outputs.push(output);
-    }
-  }
-  return outputs;
+  const candidates = [
+    ...(Array.isArray(data?.output) ? data.output : []),
+    ...(Array.isArray(data?.response?.output) ? data.response.output : []),
+    ...(Array.isArray(data?.status) ? data.status.flatMap((item: any) => item?.response?.output ?? []) : []),
+  ];
+  return candidates.filter((output: any) => output && typeof output === "object");
 }
 
 function topClass(outputs: HiveOutput[], name: string) {
@@ -97,7 +96,8 @@ function analyzeResult(data: any, mediaType: "image" | "video") {
 
   const videoDeepfake =
     mediaType === "video"
-      ? deepfakeScores.filter((score) => score >= 0.5).length >= 2 || deepfakeScores.filter((score) => score >= 0.5).length / Math.max(1, outputs.length) >= 0.05
+      ? deepfakeScores.filter((score) => score >= 0.5).length >= 2 ||
+        deepfakeScores.filter((score) => score >= 0.5).length / Math.max(1, outputs.length) >= 0.05
       : deepfake >= 0.9;
 
   if (generated >= 0.9 || (provenanceData.detected && /trainedAlgorithmicMedia/i.test(String(provenanceData.digital_source_type ?? "")) && generated >= 0.5)) {
@@ -126,7 +126,7 @@ function analyzeResult(data: any, mediaType: "image" | "video") {
     },
     likely_source: source ? { name: source[0], confidence: pct(source[1]) } : null,
     provenance: provenanceData,
-    detector: "Hive AI-Generated & Deepfake Image/Video Detection",
+    detector: "Hive AI-Generated & Deepfake Image/Video Detection (V3)",
   };
 }
 
@@ -140,7 +140,7 @@ export async function POST(request: Request) {
     const mediaUrl = typeof form.get("url") === "string" ? String(form.get("url")).trim() : "";
 
     let type: "image" | "video";
-    let body: FormData;
+    let input: { url: string };
 
     if (file instanceof File) {
       if (file.size > MAX_UPLOAD_BYTES) {
@@ -150,8 +150,13 @@ export async function POST(request: Request) {
         return response({ error: "Unsupported media type. Use JPG, PNG, WEBP, GIF, MP4, WEBM, MOV, AVI, MKV or WMV." }, 415);
       }
       type = IMAGE_TYPES.has(file.type) ? "image" : "video";
-      body = new FormData();
-      body.append("media", file, file.name);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+      }
+      input = { url: `data:${file.type};base64,${Buffer.from(binary, "binary").toString("base64")}` };
     } else if (mediaUrl) {
       let url: URL;
       try {
@@ -161,16 +166,15 @@ export async function POST(request: Request) {
       }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
       type = /\.(mp4|webm|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
-      body = new FormData();
-      body.append("url", mediaUrl);
+      input = { url: mediaUrl };
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
     }
 
     const upstream = await fetch(HIVE_ENDPOINT, {
       method: "POST",
-      headers: { Authorization: `Token ${key}`, Accept: "application/json" },
-      body,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ input }),
       signal: AbortSignal.timeout(55_000),
     });
 
