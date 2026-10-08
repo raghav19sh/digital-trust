@@ -246,7 +246,7 @@ async function factChecks(text: string) {
       available: true,
       details: { claims_checked: claims(text).length, matches: unique.length },
     } as Component,
-    facts: unique.slice(0, 8).map(({ score: _score, ...fact }) => fact),
+    facts: unique.slice(0, 8),
   };
 }
 
