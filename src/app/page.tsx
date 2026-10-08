@@ -37,7 +37,7 @@ export default function Home(){
  function key(e:KeyboardEvent<HTMLInputElement>){if(e.key==="Enter")void analyze()}
  return <>
  <main className="container">
-  <nav className="nav"><a className="brand" href="/"><span className="mark"><ShieldCheck size={18}/></span>DigiTrust</a><div className="navlinks"><a href="/how-it-works">Methodology</a><a href="/evaluation">Evaluation</a><a href="/security">Security</a><a href="/privacy">Privacy</a></div></nav>
+  <nav className="nav"><a className="brand" href="/"><span className="mark"><ShieldCheck size={18}/></span>DigiTrust</a><div className="navlinks"><a href="/how-it-works">Methodology</a><a href="/media">Media AI Check</a><a href="/evaluation">Evaluation</a><a href="/security">Security</a><a href="/privacy">Privacy</a></div></nav>
   <section className="hero"><span className="eyebrow"><ShieldCheck size={13}/> Digital Trust Intelligence · Explainable Analysis</span><h1>Before you share it, test the signal.</h1><p>Trace claims, evidence, source signals, independent coverage and linguistic risk into a transparent, auditable trust score.</p></section>
   <section className="analyzer">
    <div className="tabs"><button className={"tab "+(mode==="url"?"active":"")} onClick={()=>setMode("url")}><Link2 size={13}/> Article URL</button><button className={"tab "+(mode==="text"?"active":"")} onClick={()=>setMode("text")}><FileText size={13}/> Paste text</button></div>
