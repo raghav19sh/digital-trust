@@ -13,7 +13,7 @@ DigiTrust — Digital Trust Intelligence is a standalone Next.js application for
 - Optional Anthropic or Gemini language analysis
 - SSRF-defensive URL fetching
 - Stateless public UI with no database requirement
-- SEO metadata, sitemap, robots.txt, privacy and methodology pages
+- SEO metadata, sitemap, robots.txt, privacy and methodology pages\n- AI media authenticity checker for images and videos (Hive detector + provenance signals)
 
 ## Score
 
