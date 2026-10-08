@@ -4,129 +4,85 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
-const HIVE_ENDPOINT = "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection";
+const HIVE_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions";
+const HIVE_MODEL = "hive/ai-generated-and-deepfake-content-detection";
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
 
-type HiveClass = { class?: string; score?: number };
-type HiveOutput = { classes?: HiveClass[]; algorithmic_tags?: Record<string, any>; time?: number };
+type MediaAnalysis = {
+  verdict: "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
+  explanation: string;
+  confidence: number;
+  signals: {
+    ai_generated: number;
+    not_ai_generated: number;
+    deepfake: number;
+    frames_analyzed: number;
+  };
+  likely_source: { name: string; confidence: number } | null;
+  provenance: {
+    detected: boolean;
+    generator: string | null;
+    software_agent: string | null;
+    action: string | null;
+    digital_source_type: string | null;
+  };
+  detector: string;
+};
 
 function response(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-function pct(value: number) {
-  return Math.round(Math.max(0, Math.min(1, value)) * 1000) / 10;
+function clampPct(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.round(Math.max(0, Math.min(100, number)) * 10) / 10;
 }
 
-function collectOutputs(data: any): HiveOutput[] {
-  const candidates = [
-    ...(Array.isArray(data?.output) ? data.output : []),
-    ...(Array.isArray(data?.response?.output) ? data.response.output : []),
-    ...(Array.isArray(data?.status) ? data.status.flatMap((item: any) => item?.response?.output ?? []) : []),
-  ];
-  return candidates.filter((output: any) => output && typeof output === "object");
+function parseModelJson(content: unknown): Partial<MediaAnalysis> {
+  if (typeof content !== "string") throw new Error("Hive returned an unexpected response format.");
+
+  const cleaned = content
+    .replace(/^\s*```json\s*/i, "")
+    .replace(/^\s*```\s*/i, "")
+    .replace(/\s*```\s*$/i, "")
+    .trim();
+
+  const parsed = JSON.parse(cleaned);
+  if (!parsed || typeof parsed !== "object") throw new Error("Hive returned an invalid analysis.");
+  return parsed;
 }
 
-function topClass(outputs: HiveOutput[], name: string) {
-  let best = 0;
-  for (const output of outputs) {
-    for (const item of output.classes ?? []) {
-      if (item.class === name) best = Math.max(best, Number(item.score) || 0);
-    }
-  }
-  return best;
-}
-
-function allClassScores(outputs: HiveOutput[], name: string) {
-  return outputs.flatMap((output) =>
-    (output.classes ?? [])
-      .filter((item) => item.class === name)
-      .map((item) => Number(item.score) || 0),
-  );
-}
-
-function provenance(outputs: HiveOutput[]) {
-  for (const output of outputs) {
-    const c2pa = output.algorithmic_tags?.c2pa;
-    if (c2pa && typeof c2pa === "object") {
-      return {
-        detected: true,
-        generator: c2pa.claim_generator || null,
-        software_agent: c2pa.actions_software_agent || null,
-        action: c2pa.actions_action || null,
-        digital_source_type: c2pa.actions_digital_source_type || null,
-      };
-    }
-  }
-  return { detected: false, generator: null, software_agent: null, action: null, digital_source_type: null };
-}
-
-function analyzeResult(data: any, mediaType: "image" | "video") {
-  const outputs = collectOutputs(data);
-  if (!outputs.length) throw new Error("The detector returned no analyzable frames.");
-
-  const generated = topClass(outputs, "ai_generated");
-  const notGenerated = topClass(outputs, "not_ai_generated");
-  const deepfakeScores = allClassScores(outputs, "deepfake");
-  const deepfake = Math.max(0, ...deepfakeScores);
-  const provenanceData = provenance(outputs);
-
-  const sourceScores = new Map<string, number>();
-  const excluded = new Set(["ai_generated", "not_ai_generated", "deepfake", "none", "inconclusive", "inconclusive_video"]);
-  for (const output of outputs) {
-    for (const item of output.classes ?? []) {
-      if (!item.class || excluded.has(item.class)) continue;
-      const score = Number(item.score) || 0;
-      if (score > (sourceScores.get(item.class) ?? 0)) sourceScores.set(item.class, score);
-    }
-  }
-  const source = [...sourceScores.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
-
-  const aiEditSources = new Set(["stablediffusioninpaint", "sdxlinpaint"]);
-  const aiEditSource = [...sourceScores.entries()].find(([name, score]) => aiEditSources.has(name) && score >= 0.5);
-  const c2paSaysAiEdit =
-    provenanceData.detected &&
-    /edited|filtered|placed/i.test(String(provenanceData.action ?? "")) &&
-    (/trainedalgorithmicmedia|generative|algorithmic/i.test(String(provenanceData.digital_source_type ?? "")) ||
-      /gpt|dall|midjourney|firefly|stable|runway|sora|gemini|veo|kling|adobe|openai/i.test(String(provenanceData.software_agent ?? "")));
-
-  let verdict: "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
-  let explanation: string;
-
-  const videoDeepfake =
-    mediaType === "video"
-      ? deepfakeScores.filter((score) => score >= 0.5).length >= 2 ||
-        deepfakeScores.filter((score) => score >= 0.5).length / Math.max(1, outputs.length) >= 0.05
-      : deepfake >= 0.9;
-
-  if (generated >= 0.9 || (provenanceData.detected && /trainedAlgorithmicMedia/i.test(String(provenanceData.digital_source_type ?? "")) && generated >= 0.5)) {
-    verdict = "AI_GENERATED";
-    explanation = "The media has a strong synthetic-generation signal.";
-  } else if (videoDeepfake || deepfake >= 0.9 || aiEditSource || c2paSaysAiEdit) {
-    verdict = "AI_MANIPULATED";
-    explanation = "The media has a strong signal of AI-based manipulation, face synthesis, or AI-assisted editing.";
-  } else if (Math.max(generated, deepfake) < 0.35 && notGenerated >= 0.65 && !provenanceData.detected) {
-    verdict = "NO_STRONG_AI_SIGNAL";
-    explanation = "No strong AI-generation or deepfake signal was detected by the configured detector.";
-  } else {
-    verdict = "INCONCLUSIVE";
-    explanation = "The available signals are not strong enough for a reliable classification.";
-  }
+function normalizeResult(raw: Partial<MediaAnalysis>): MediaAnalysis {
+  const verdicts = new Set(["AI_GENERATED", "AI_MANIPULATED", "NO_STRONG_AI_SIGNAL", "INCONCLUSIVE"]);
+  const verdict = verdicts.has(String(raw.verdict)) ? raw.verdict! : "INCONCLUSIVE";
 
   return {
     verdict,
-    explanation,
-    confidence: pct(verdict === "AI_GENERATED" ? generated : verdict === "AI_MANIPULATED" ? Math.max(deepfake, aiEditSource?.[1] ?? 0) : Math.max(notGenerated, 1 - generated)),
+    explanation: String(raw.explanation || "Hive did not provide a detailed explanation."),
+    confidence: clampPct(raw.confidence),
     signals: {
-      ai_generated: pct(generated),
-      not_ai_generated: pct(notGenerated),
-      deepfake: pct(deepfake),
-      frames_analyzed: outputs.length,
+      ai_generated: clampPct(raw.signals?.ai_generated),
+      not_ai_generated: clampPct(raw.signals?.not_ai_generated),
+      deepfake: clampPct(raw.signals?.deepfake),
+      frames_analyzed: Math.max(0, Math.round(Number(raw.signals?.frames_analyzed) || 1)),
     },
-    likely_source: source ? { name: source[0], confidence: pct(source[1]) } : null,
-    provenance: provenanceData,
-    detector: "Hive AI-Generated & Deepfake Image/Video Detection (V3)",
+    likely_source:
+      raw.likely_source?.name
+        ? {
+            name: String(raw.likely_source.name),
+            confidence: clampPct(raw.likely_source.confidence),
+          }
+        : null,
+    provenance: {
+      detected: Boolean(raw.provenance?.detected),
+      generator: raw.provenance?.generator ? String(raw.provenance.generator) : null,
+      software_agent: raw.provenance?.software_agent ? String(raw.provenance.software_agent) : null,
+      action: raw.provenance?.action ? String(raw.provenance.action) : null,
+      digital_source_type: raw.provenance?.digital_source_type ? String(raw.provenance.digital_source_type) : null,
+    },
+    detector: "Hive AI-Generated & Deepfake Content Detection (V3)",
   };
 }
 
@@ -139,8 +95,8 @@ export async function POST(request: Request) {
     const file = form.get("file");
     const mediaUrl = typeof form.get("url") === "string" ? String(form.get("url")).trim() : "";
 
-    let type: "image" | "video";
-    let input: { url: string };
+    let mediaType: "image" | "video";
+    let mediaInput: { url: string };
 
     if (file instanceof File) {
       if (file.size > MAX_UPLOAD_BYTES) {
@@ -149,14 +105,10 @@ export async function POST(request: Request) {
       if (!IMAGE_TYPES.has(file.type) && !VIDEO_TYPES.has(file.type)) {
         return response({ error: "Unsupported media type. Use JPG, PNG, WEBP, GIF, MP4, WEBM, MOV, AVI, MKV or WMV." }, 415);
       }
-      type = IMAGE_TYPES.has(file.type) ? "image" : "video";
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = "";
-      const chunkSize = 0x8000;
-      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-        binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
-      }
-      input = { url: `data:${file.type};base64,${Buffer.from(binary, "binary").toString("base64")}` };
+
+      mediaType = IMAGE_TYPES.has(file.type) ? "image" : "video";
+      const bytes = Buffer.from(await file.arrayBuffer());
+      mediaInput = { url: `data:${file.type};base64,${bytes.toString("base64")}` };
     } else if (mediaUrl) {
       let url: URL;
       try {
@@ -165,26 +117,128 @@ export async function POST(request: Request) {
         return response({ error: "Invalid media URL." }, 400);
       }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
-      type = /\.(mp4|webm|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
-      input = { url: mediaUrl };
+
+      mediaType = /\.(mp4|webm|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
+      mediaInput = { url: mediaUrl };
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
     }
 
+    const mediaContent =
+      mediaType === "video"
+        ? { type: "video_url", video_url: mediaInput }
+        : { type: "image_url", image_url: mediaInput };
+
     const upstream = await fetch(HIVE_ENDPOINT, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ input }),
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        model: HIVE_MODEL,
+        max_tokens: 500,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Analyze this ${mediaType} specifically for AI generation and deepfake/manipulation signals. Return ONLY valid JSON matching this schema. Do not invent C2PA metadata or scores. Use 0-100 percentages for signal scores. If a value is unavailable, use 0 or null.
+
+{
+  "verdict": "AI_GENERATED | AI_MANIPULATED | NO_STRONG_AI_SIGNAL | INCONCLUSIVE",
+  "explanation": "short evidence-based explanation",
+  "confidence": 0,
+  "signals": {
+    "ai_generated": 0,
+    "not_ai_generated": 0,
+    "deepfake": 0,
+    "frames_analyzed": 1
+  },
+  "likely_source": { "name": "string", "confidence": 0 },
+  "provenance": {
+    "detected": false,
+    "generator": null,
+    "software_agent": null,
+    "action": null,
+    "digital_source_type": null
+  }
+}`,
+              },
+              mediaContent,
+            ],
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "media_authenticity_result",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                verdict: { type: "string", enum: ["AI_GENERATED", "AI_MANIPULATED", "NO_STRONG_AI_SIGNAL", "INCONCLUSIVE"] },
+                explanation: { type: "string" },
+                confidence: { type: "number" },
+                signals: {
+                  type: "object",
+                  properties: {
+                    ai_generated: { type: "number" },
+                    not_ai_generated: { type: "number" },
+                    deepfake: { type: "number" },
+                    frames_analyzed: { type: "number" },
+                  },
+                  required: ["ai_generated", "not_ai_generated", "deepfake", "frames_analyzed"],
+                  additionalProperties: false,
+                },
+                likely_source: {
+                  anyOf: [
+                    {
+                      type: "object",
+                      properties: {
+                        name: { type: "string" },
+                        confidence: { type: "number" },
+                      },
+                      required: ["name", "confidence"],
+                      additionalProperties: false,
+                    },
+                    { type: "null" },
+                  ],
+                },
+                provenance: {
+                  type: "object",
+                  properties: {
+                    detected: { type: "boolean" },
+                    generator: { anyOf: [{ type: "string" }, { type: "null" }] },
+                    software_agent: { anyOf: [{ type: "string" }, { type: "null" }] },
+                    action: { anyOf: [{ type: "string" }, { type: "null" }] },
+                    digital_source_type: { anyOf: [{ type: "string" }, { type: "null" }] },
+                  },
+                  required: ["detected", "generator", "software_agent", "action", "digital_source_type"],
+                  additionalProperties: false,
+                },
+              },
+              required: ["verdict", "explanation", "confidence", "signals", "likely_source", "provenance"],
+              additionalProperties: false,
+            },
+          },
+        },
+      }),
       signal: AbortSignal.timeout(55_000),
     });
 
     const data = await upstream.json().catch(() => null);
+
     if (!upstream.ok) {
-      const message = data?.message || data?.error || `Media detector returned HTTP ${upstream.status}.`;
+      const message = data?.error?.message || data?.message || data?.error || `Hive returned HTTP ${upstream.status}.`;
       return response({ error: String(message) }, upstream.status >= 500 ? 502 : 400);
     }
 
-    return response(analyzeResult(data, type));
+    const content = data?.choices?.[0]?.message?.content;
+    const raw = parseModelJson(content);
+    return response(normalizeResult(raw));
   } catch (error) {
     return response({ error: error instanceof Error ? error.message : "Media analysis failed." }, 500);
   }
