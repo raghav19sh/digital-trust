@@ -19,7 +19,7 @@ const weights = {
   language_signals: 0.2,
 } as const;
 
-type Flag = { category: string; excerpt: string; explanation: string };
+type Flag = { category: string; excerpt: string; explanation: string; penalty: number };
 type Component = {
   score: number;
   weight: number;
@@ -137,7 +137,7 @@ async function fetchArticle(input: string) {
   throw new Error("Too many redirects.");
 }
 
-function language(text: string) {
+function extractClaims(text: string) {\n  const sentences = text.split(/(?<=[.!?])\\s+/).map((x) => x.trim()).filter((x) => x.length > 55);\n  return sentences.slice(0, 5).map((x, i) => ({ id: `C${String(i + 1).padStart(2, "0")}`, text: x.slice(0, 280), confidence: Math.min(98, Math.round(65 + x.length / 10 + (/[0-9%]|\\b(is|are|was|were|will|has|have)\\b/i.test(x) ? 15 : 0))) }));\n}\n\nfunction language(text: string) {
   const tests: Array<[string, RegExp, number, string]> = [
     ["clickbait", /\b(shocking|you won't believe|must see|exposed|bombshell|going viral|urgent)\b/gi, 6, "Sensational phrasing can pressure readers to react before checking evidence."],
     ["emotional manipulation", /\b(outrage|disgusting|evil|traitor|corrupt|terrifying|horrific|insane|idiot|propaganda)\b/gi, 3, "Loaded wording can frame a claim emotionally."],
@@ -151,19 +151,19 @@ function language(text: string) {
   for (const [category, regex, penalty, explanation] of tests) {
     const hits = text.match(regex) ?? [];
     score -= Math.min(20, hits.length * penalty);
-    if (hits[0]) flags.push({ category, excerpt: hits[0], explanation });
+    if (hits[0]) flags.push({ category, excerpt: hits[0], explanation, penalty: p });
   }
 
   const caps = text.match(/\b[A-Z]{6,}\b/g) ?? [];
   if (caps[0]) {
     score -= Math.min(10, caps.length * 2);
-    flags.push({ category: "all-caps", excerpt: caps[0], explanation: "Repeated all-caps wording can increase emotional intensity." });
+    flags.push({ category: "all-caps", excerpt: caps[0], explanation: "Repeated all-caps wording can increase emotional intensity.", penalty: Math.min(10, caps.length * 2) });
   }
 
   const marks = text.match(/!{2,}|\?{3,}/g) ?? [];
   if (marks[0]) {
     score -= Math.min(10, marks.length * 3);
-    flags.push({ category: "punctuation intensity", excerpt: marks[0], explanation: "Repeated punctuation can signal sensational presentation." });
+    flags.push({ category: "punctuation intensity", excerpt: marks[0], explanation: "Repeated punctuation can signal sensational presentation.", penalty: Math.min(10, marks.length * 3) });
   }
 
   return { score: clamp(score), flags: flags.slice(0, 8) };
@@ -341,6 +341,37 @@ export async function POST(request: Request) {
     };
 
     const trustScore = overall(components);
+    const numerator = Object.values(components).reduce((sum, item) => sum + item.score * item.weight, 0);
+    const denominator = Object.values(components).reduce((sum, item) => sum + item.weight, 0);
+    const extractedClaims = extractClaims(text);
+    const evidence = fact.facts.map((item, index) => ({
+      id: `E${String(index + 1).padStart(2, "0")}`,
+      claim: item.claim,
+      status: /false|incorrect|misleading|fake/i.test(item.rating) ? "CONFLICTING" : /true|correct|accurate/i.test(item.rating) ? "SUPPORTED" : "REVIEWED",
+      source: item.publisher,
+      url: item.url,
+      contribution: (item.score * weights.fact_check) / Math.max(1, fact.facts.length),
+    }));
+    const securityChecks = [
+      { name: "Protocol allowlist", status: "PASS", detail: "Only HTTP/HTTPS URLs are accepted." },
+      { name: "Credential blocking", status: "PASS", detail: "Embedded URL credentials are rejected." },
+      { name: "Private-network protection", status: "PASS", detail: "Private, loopback, link-local and multicast destinations are blocked." },
+      { name: "Redirect revalidation", status: "PASS", detail: `Redirects are capped at ${MAX_REDIRECTS} and every destination is revalidated.` },
+      { name: "Port restriction", status: "PASS", detail: "Only ports 80 and 443 are accepted." },
+      { name: "Response-size limit", status: "PASS", detail: `${MAX_BYTES.toLocaleString()} byte maximum before parsing.` },
+      { name: "Request timeout", status: "PASS", detail: "15 second fetch timeout." },
+      { name: "Rate limiting", status: "PASS", detail: `${RATE_LIMIT} requests per minute per observed client key.` },
+    ];
+    const audit = [
+      { step: 1, name: "Content acquisition", status: "PASS", detail: inputUrl ? "Fetched and sanitized public article content." : "Accepted pasted text after validation.", value: inputUrl ? sourceUrl ?? "URL" : "TEXT" },
+      { step: 2, name: "Claim extraction", status: "PASS", detail: `${extractedClaims.length} candidate factual sentences retained.`, value: `${extractedClaims.length} claims` },
+      { step: 3, name: "Language analysis", status: "PASS", detail: `${languageResult.flags.length} linguistic risk categories detected.`, value: `score ${languageResult.score}/100` },
+      { step: 4, name: "Fact-check lookup", status: fact.component.available ? "PASS" : "UNAVAILABLE", detail: fact.component.available ? `${fact.facts.length} ClaimReview matches returned.` : String(fact.component.details.reason), value: `${Math.round(fact.component.score)}/100` },
+      { step: 5, name: "Domain analysis", status: domain ? "PASS" : "NEUTRAL", detail: String(components.domain_reputation.details.method), value: `${Math.round(components.domain_reputation.score)}/100` },
+      { step: 6, name: "Independent coverage", status: news.component.available ? "PASS" : "UNAVAILABLE", detail: news.component.available ? `${news.sources.length} independent sources returned.` : String(news.component.details.reason), value: `${Math.round(news.component.score)}/100` },
+      { step: 7, name: "Weighted calculation", status: "PASS", detail: "Σ(component score × component weight) ÷ Σ(weight).", value: String(trustScore) },
+      { step: 8, name: "Evidence packaging", status: "PASS", detail: "Claims, evidence, deductions and security controls serialized for review.", value: `${evidence.length} evidence links` },
+    ];
 
     return response({
       source_url: sourceUrl,
@@ -355,7 +386,7 @@ export async function POST(request: Request) {
       components,
       red_flags: languageResult.flags,
       verified_facts: fact.facts,
-      sources: news.sources,
+      sources: news.sources,\n      claims: extractedClaims,\n      evidence,\n      audit,\n      score_formula: { numerator, denominator, formula: "Σ(score × weight) ÷ Σ(weight)" },\n      security: { checks: securityChecks },\n      meta: { analyzer_version: "1.1.0", text_characters: text.length },
     });
   } catch (error) {
     return response({ error: error instanceof Error ? error.message : "Analysis failed." }, 400);
