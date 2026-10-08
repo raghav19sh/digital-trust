@@ -156,7 +156,7 @@ function language(text: string) {
   for (const [category, regex, penalty, explanation] of tests) {
     const hits = text.match(regex) ?? [];
     score -= Math.min(20, hits.length * penalty);
-    if (hits[0]) flags.push({ category, excerpt: hits[0], explanation, penalty: p });
+    if (hits[0]) flags.push({ category, excerpt: hits[0], explanation, penalty });
   }
 
   const caps = text.match(/\b[A-Z]{6,}\b/g) ?? [];
@@ -391,7 +391,13 @@ export async function POST(request: Request) {
       components,
       red_flags: languageResult.flags,
       verified_facts: fact.facts,
-      sources: news.sources,\n      claims: extractedClaims,\n      evidence,\n      audit,\n      score_formula: { numerator, denominator, formula: "Σ(score × weight) ÷ Σ(weight)" },\n      security: { checks: securityChecks },\n      meta: { analyzer_version: "1.1.0", text_characters: text.length },
+      sources: news.sources,
+      claims: extractedClaims,
+      evidence,
+      audit,
+      score_formula: { numerator, denominator, formula: "Σ(score × weight) ÷ Σ(weight)" },
+      security: { checks: securityChecks },
+      meta: { analyzer_version: "1.1.0", text_characters: text.length },
     });
   } catch (error) {
     return response({ error: error instanceof Error ? error.message : "Analysis failed." }, 400);
