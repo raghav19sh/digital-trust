@@ -205,7 +205,7 @@ async function factChecks(text: string) {
   if (!key) {
     return {
       component: { score: 50, weight: weights.fact_check, available: false, details: { reason: "Google Fact Check API not configured." } } as Component,
-      facts: [] as Array<{ claim: string; rating: string; publisher: string; url: string | null }>,
+      facts: [] as Array<{ claim: string; rating: string; publisher: string; url: string | null; score: number }>,
     };
   }
 
