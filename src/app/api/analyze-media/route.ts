@@ -12,7 +12,7 @@ const HIVE_CHAT_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions";
 const HIVE_VLM_MODEL = "hive/vision-language-model";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
+const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
 
 type MediaAnalysis = {
   verdict: "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
@@ -401,7 +401,7 @@ export async function POST(request: Request) {
         return response({ error: "Direct uploads are limited to 4 MB on DigiTrust. For larger media, use a public media URL." }, 413);
       }
       if (!IMAGE_TYPES.has(file.type) && !VIDEO_TYPES.has(file.type)) {
-        return response({ error: "Unsupported media type. Use JPG, PNG, WEBP, GIF, MP4, WEBM, MOV, AVI, MKV or WMV." }, 415);
+        return response({ error: "Unsupported media type. Use JPG, PNG, WEBP, GIF, MP4, WEBM, M4V, MOV, AVI, MKV or WMV." }, 415);
       }
 
       mediaType = IMAGE_TYPES.has(file.type) ? "image" : "video";
@@ -412,7 +412,7 @@ export async function POST(request: Request) {
       try { url = new URL(mediaUrl); } catch { return response({ error: "Invalid media URL." }, 400); }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
 
-      mediaType = /\.(mp4|webm|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
+      mediaType = /\.(mp4|webm|m4v|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
       mediaInput = mediaUrl;
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
