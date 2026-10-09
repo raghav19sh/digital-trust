@@ -369,18 +369,11 @@ export async function POST(request: Request) {
     try {
       return response(await runDetector(key, mediaInput));
     } catch (detectorError) {
-      console.error("Hive dedicated detector failed; attempting VLM fallback.", detectorError);
-
-      try {
-        return response(await runVlmFallback(key, mediaType, mediaInput));
-      } catch (fallbackError) {
-        console.error("Hive VLM fallback failed.", fallbackError);
-        return response({
-          error: "Hive media analysis failed.",
-          detail: detectorError instanceof Error ? detectorError.message : "Dedicated detector failed.",
-          fallback: fallbackError instanceof Error ? fallbackError.message : "VLM fallback failed.",
-        }, 502);
-      }
+      console.error("Hive dedicated detector failed.", detectorError);
+      return response({
+        error: "Hive dedicated media detector failed.",
+        detail: detectorError instanceof Error ? detectorError.message : "Dedicated detector failed.",
+      }, 502);
     }
   } catch (error) {
     console.error("Media analysis route failed.", error);
