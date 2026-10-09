@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
-const HIVE_DETECTOR_ENDPOINT = "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection";
+const HIVE_DETECTOR_ENDPOINTS = [\n  "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",\n  "https://api-cdn.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",\n];
 const HIVE_CHAT_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions";
 const HIVE_VLM_MODEL = "hive/vision-language-model";
 
@@ -191,26 +191,37 @@ function normalizeVlm(raw: any, mediaType: "image" | "video"): MediaAnalysis {
 }
 
 async function runDetector(key: string, mediaInput: string) {
-  const upstream = await fetch(HIVE_DETECTOR_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key.trim()}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ input: { url: mediaInput } }),
-    signal: AbortSignal.timeout(45_000),
-  });
+  let lastError = "Hive detector request failed.";
 
-  const text = await upstream.text();
-  let data: any = null;
-  try { data = JSON.parse(text); } catch {}
+  for (const endpoint of HIVE_DETECTOR_ENDPOINTS) {
+    try {
+      const upstream = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key.trim()}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ input: { url: mediaInput } }),
+        signal: AbortSignal.timeout(45_000),
+      });
 
-  if (!upstream.ok) {
-    throw new Error(`Hive detector HTTP ${upstream.status}: ${String(getStatusMessage(data) || text || "Unknown error").slice(0, 500)}`);
+      const text = await upstream.text();
+      let data: any = null;
+      try { data = JSON.parse(text); } catch {}
+
+      if (!upstream.ok) {
+        lastError = `Hive detector HTTP ${upstream.status}: ${String(getStatusMessage(data) || text || "Unknown error").slice(0, 500)}`;
+        continue;
+      }
+
+      return normalizeDetector(data);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Hive detector request failed.";
+    }
   }
 
-  return normalizeDetector(data);
+  throw new Error(lastError);
 }
 
 async function runVlmFallback(key: string, mediaType: "image" | "video", mediaInput: string) {
