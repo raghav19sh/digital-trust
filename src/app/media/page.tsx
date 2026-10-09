@@ -9,6 +9,7 @@ type Result = {
   explanation: string;
   confidence: number;
   signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number };
+  forensic: { metadata: { available: boolean; score: number; anomaly: number; fields: string[]; software: string | null; camera: string | null; c2pa: boolean }; frequency: { available: boolean; score: number; low_energy: number; mid_energy: number; high_energy: number; high_frequency_ratio: number; note: string }; face: { available: boolean; score: number; source: string } };
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
   detector: string;
@@ -92,9 +93,11 @@ export default function MediaPage() {
         <div><span className="muted small">Frames analyzed</span><b>{result.signals.frames_analyzed}</b></div>
       </div>
 
+      <div className="card"><div className="section-head"><div><span className="section-kicker">FORENSIC SIGNALS</span><h2>Metadata + frequency evidence</h2></div></div><div className="method-grid"><div><b>Metadata anomaly</b><p>{result.forensic.metadata.anomaly}% · {result.forensic.metadata.fields.length ? result.forensic.metadata.fields.join(", ") : "No readable metadata fields"}</p>{result.forensic.metadata.software&&<p className="muted small">Software: {result.forensic.metadata.software}</p>}</div><div><b>Frequency fingerprint</b><p>{result.forensic.frequency.score}% heuristic anomaly</p><p className="muted small">High-frequency energy: {result.forensic.frequency.high_frequency_ratio}%</p></div><div><b>Face / deepfake</b><p>{result.forensic.face.score}% model signal</p><p className="muted small">{result.forensic.face.source}</p></div><div><b>Interpretation</b><p>{result.forensic.frequency.note}</p></div></div></div>
+
       <div className="two">
         <div className="card"><div className="section-head"><div><span className="section-kicker">PROVENANCE</span><h2>Content credentials</h2></div></div>
-          {result.provenance.detected ? <div className="media-details"><div><strong>Credentials detected</strong><span>Cryptographically-backed provenance metadata was supplied by the detector.</span></div>{result.provenance.generator&&<div><strong>Claim generator</strong><span>{result.provenance.generator}</span></div>}{result.provenance.software_agent&&<div><strong>Software / model</strong><span>{result.provenance.software_agent}</span></div>}{result.provenance.action&&<div><strong>Action</strong><span>{result.provenance.action}</span></div>}</div> : <p className="muted small">No C2PA provenance signal was returned. This is not evidence that the file is authentic; provenance can be absent or stripped.</p>}
+          {result.provenance.detected ? <div className="media-details"><div><strong>Credentials detected</strong><span>A C2PA provenance signal was detected in the supplied media.</span></div>{result.provenance.generator&&<div><strong>Claim generator</strong><span>{result.provenance.generator}</span></div>}{result.provenance.software_agent&&<div><strong>Software / model</strong><span>{result.provenance.software_agent}</span></div>}{result.provenance.action&&<div><strong>Action</strong><span>{result.provenance.action}</span></div>}</div> : <p className="muted small">No C2PA provenance signal was returned. This is not evidence that the file is authentic; provenance can be absent or stripped.</p>}
         </div>
         <div className="card"><div className="section-head"><div><span className="section-kicker">SOURCE ATTRIBUTION</span><h2>Likely generator</h2></div></div>{result.likely_source ? <div className="source"><strong>{result.likely_source.name}</strong><div className="small muted">{result.likely_source.confidence}% source confidence</div></div> : <p className="muted small">No specific generator was identified.</p>}<p className="muted small" style={{marginTop:14}}>Detector: {result.detector}</p></div>
       </div>
