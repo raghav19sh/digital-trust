@@ -70,9 +70,9 @@ export default function MediaPage() {
       <label className="uploadbox">
         <UploadCloud size={28}/>
         <strong>{file ? file.name : "Choose an image or video"}</strong>
-        <span>JPG · PNG · WEBP · GIF · MP4 · WEBM · MOV · AVI · MKV · WMV</span>
+        <span>JPG · PNG · WEBP · GIF · MP4 · WEBM · M4V · MOV · AVI · MKV · WMV</span>
         <small>Direct upload: 4 MB maximum. Larger videos can be checked by public URL.</small>
-        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv" onChange={pick}/>
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/x-m4v,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv" onChange={pick}/>
       </label>
       <div className="or">OR</div>
       <div className="inputrow"><input className="input" value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://example.com/video.mp4"/><button className="btn" onClick={()=>void analyze()} disabled={loading}>{loading ? "Checking…" : "Check media"}</button></div>
