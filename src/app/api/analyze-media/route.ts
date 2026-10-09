@@ -346,7 +346,7 @@ export async function POST(request: Request) {
       try { url = new URL(mediaUrl); } catch { return response({ error: "Invalid media URL." }, 400); }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
 
-      mediaType = /.(mp4|webm|mov|avi|mkv|wmv)(?:?|$)/i.test(url.pathname) ? "video" : "image";
+      mediaType = /\.(mp4|webm|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
       mediaInput = mediaUrl;
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
