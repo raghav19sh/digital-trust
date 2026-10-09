@@ -31,7 +31,7 @@ function clampPct(value: unknown) {
 
 function parseModelJson(content: unknown): Partial<MediaAnalysis> {
   if (typeof content !== "string") throw new Error("Hive returned an unexpected response format.");
-  const cleaned = content.replace(/^\s*```json\s*/i, "").replace(/^\s*```\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  const cleaned = content.replace(/^\s*\`\`\`json\s*/i, "").replace(/^\s*\`\`\`\s*/i, "").replace(/\s*\`\`\`\s*$/i, "").trim();
   const parsed = JSON.parse(cleaned);
   if (!parsed || typeof parsed !== "object") throw new Error("Hive returned an invalid analysis.");
   return parsed;
@@ -91,8 +91,8 @@ export async function POST(request: Request) {
     }
 
     const mediaContent = mediaType === "video"
-      ? { type: "video_url", video_url: mediaInput }
-      : { type: "image_url", image_url: mediaInput };
+      ? { type: "media_url", media_url: { url: mediaInput.url, sampling: { strategy: "fps", fps: 1 }, prompt_scope: "once" } }
+      : { type: "image_url", image_url: { url: mediaInput.url } };
 
     const upstream = await fetch(HIVE_ENDPOINT, {
       method: "POST",
