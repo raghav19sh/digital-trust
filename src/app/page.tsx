@@ -70,9 +70,9 @@ export default function Home(){
     <label className="media-drop">
      <UploadCloud size={22}/>
      <strong>{mediaFile?mediaFile.name:"Choose image or video"}</strong>
-     <span>JPG · PNG · WEBP · GIF · MP4 · WEBM · MOV · AVI · MKV · WMV</span>
+     <span>JPG · PNG · WEBP · GIF · MP4 · WEBM · M4V · MOV · AVI · MKV · WMV</span>
      <small>Direct upload up to 4 MB. Larger videos can be checked by public URL.</small>
-     <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv" onChange={e=>{setMediaFile(e.target.files?.[0]??null);setMediaResult(null);setMediaError("")}}/>
+     <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/x-m4v,video/x-msvideo,video/x-matroska,video/x-ms-wmv" onChange={e=>{setMediaFile(e.target.files?.[0]??null);setMediaResult(null);setMediaError("")}}/>
     </label>
     <div className="media-urlbox">
      <span className="section-kicker">PUBLIC MEDIA URL</span>
