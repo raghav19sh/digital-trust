@@ -4,7 +4,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
-const HIVE_DETECTOR_ENDPOINTS = [\n  "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",\n  "https://api-cdn.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",\n];
+const HIVE_DETECTOR_ENDPOINTS = [
+  "https://api.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",
+  "https://api-cdn.thehive.ai/api/v3/hive/ai-generated-and-deepfake-content-detection",
+];
 const HIVE_CHAT_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions";
 const HIVE_VLM_MODEL = "hive/vision-language-model";
 
