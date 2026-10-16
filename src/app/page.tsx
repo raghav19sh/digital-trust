@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type KeyboardEvent, type ChangeEvent } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -106,14 +107,14 @@ export default function Home() {
 
   return (
     <>
-      <main className="container">
+      <main id="main-content" className="container">
         <nav className="nav">
-          <a className="brand" href="/">
+          <Link className="brand" href="/">
             <span className="mark">
               <ShieldCheck size={18} />
             </span>
             <span>DigiTrust</span>
-          </a>
+          </Link>
           <div className="navlinks">
             <a href="/how-it-works">How it works</a>
             <a href="/privacy">Privacy</a>

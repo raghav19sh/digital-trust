@@ -1,12 +1,14 @@
+import Link from "next/link";
+
 export default function HowItWorks() {
   return (
-    <main className="container page">
+    <main id="main-content" className="container page">
       <nav className="nav">
-        <a className="brand" href="/">
+        <Link className="brand" href="/">
           <span className="mark">DT</span>
           DigiTrust
-        </a>
-        <a className="muted" href="/">← Analyzer</a>
+        </Link>
+        <Link className="muted" href="/">← Analyzer</Link>
       </nav>
       <article className="prose">
         <h1>How DigiTrust works</h1>

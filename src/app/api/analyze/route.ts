@@ -7,6 +7,7 @@ export const maxDuration = 60;
 
 const MAX_TEXT = 20000;
 const MAX_BYTES = 900000;
+const MAX_REQUEST_BYTES = 100000;
 const MAX_REDIRECTS = 3;
 const RATE_LIMIT = 12;
 const WINDOW = 60000;
@@ -36,16 +37,19 @@ function clamp(n: number) {
 
 function publicIp(ip: string) {
   if (net.isIPv4(ip)) {
-    const [a, b] = ip.split(".").map(Number);
-    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)) return false;
+    const [a, b, c] = ip.split(".").map(Number);
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a === 169 && b === 254) return false;
     if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a >= 224) return false;
+    if (a === 192 && ((b === 0 && (c === 0 || c === 2)) || (b === 88 && c === 99) || b === 168)) return false;
+    if (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) return false;
+    if (a === 203 && b === 0 && c === 113) return false;
     return true;
   }
   if (!net.isIPv6(ip)) return false;
   const x = ip.toLowerCase();
-  return x !== "::" && x !== "::1" && !x.startsWith("fc") && !x.startsWith("fd") && !x.startsWith("fe80:");
+  return /^[23]/.test(x) && !x.startsWith("2001:db8:");
 }
 
 async function validateHost(host: string, port: number) {
@@ -62,6 +66,28 @@ async function validateHost(host: string, port: number) {
 
 function clean(text: string) {
   return text.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
+}
+
+async function readRequestJson(request: Request) {
+  if (!request.body) throw new Error("Request body is empty.");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        throw new Error("Request body is too large.");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")) as { url?: unknown; text?: unknown };
 }
 
 function stripHtml(html: string) {
@@ -107,31 +133,59 @@ async function fetchArticle(input: string) {
         },
       });
     } catch {
+      clearTimeout(timer);
       throw new Error("Could not fetch that page.");
+    }
+
+    try {
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get("location");
+        await res.body?.cancel();
+        if (!location) throw new Error("Invalid redirect.");
+        current = new URL(location, url).toString();
+        continue;
+      }
+
+      if (!res.ok) throw new Error("The page returned HTTP " + res.status + ".");
+      const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+      if (type !== "text/html" && type !== "application/xhtml+xml" && type !== "text/plain") {
+        await res.body?.cancel();
+        throw new Error("Only HTML and plain-text pages are supported.");
+      }
+
+      const declaredLength = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_BYTES) {
+        await res.body?.cancel();
+        throw new Error("The page is too large to analyze.");
+      }
+      if (!res.body) throw new Error("The page returned an empty response.");
+
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_BYTES) {
+            await reader.cancel();
+            throw new Error("The page is too large to analyze.");
+          }
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+
+      const bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
+      const parsed = type === "text/plain" ? { title: null, text: clean(bytes.toString("utf8")) } : stripHtml(bytes.toString("utf8"));
+      if (parsed.text.length < 100) throw new Error("Not enough readable text was found on that page.");
+
+      return { url: current, domain: url.hostname.toLowerCase(), title: parsed.title, text: parsed.text };
     } finally {
       clearTimeout(timer);
     }
-
-    if (res.status >= 300 && res.status < 400) {
-      const location = res.headers.get("location");
-      if (!location) throw new Error("Invalid redirect.");
-      current = new URL(location, url).toString();
-      continue;
-    }
-
-    if (!res.ok) throw new Error("The page returned HTTP " + res.status + ".");
-    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (type !== "text/html" && type !== "application/xhtml+xml" && type !== "text/plain") {
-      throw new Error("Only HTML and plain-text pages are supported.");
-    }
-
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.length > MAX_BYTES) throw new Error("The page is too large to analyze.");
-
-    const parsed = type === "text/plain" ? { title: null, text: clean(bytes.toString("utf8")) } : stripHtml(bytes.toString("utf8"));
-    if (parsed.text.length < 100) throw new Error("Not enough readable text was found on that page.");
-
-    return { url: current, domain: url.hostname.toLowerCase(), title: parsed.title, text: parsed.text };
   }
 
   throw new Error("Too many redirects.");
@@ -308,7 +362,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = (await request.json()) as { url?: unknown; text?: unknown };
+    const contentLength = Number(request.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
+      return response({ error: "Request body is too large." }, 413);
+    }
+    const body = await readRequestJson(request);
     const inputUrl = typeof body.url === "string" ? body.url.trim() : "";
     let text = typeof body.text === "string" ? clean(body.text) : "";
     let sourceUrl: string | null = null;
@@ -358,6 +416,7 @@ export async function POST(request: Request) {
       sources: news.sources,
     });
   } catch (error) {
-    return response({ error: error instanceof Error ? error.message : "Analysis failed." }, 400);
+    const message = error instanceof Error ? error.message : "Analysis failed.";
+    return response({ error: message }, message === "Request body is too large." ? 413 : 400);
   }
 }
