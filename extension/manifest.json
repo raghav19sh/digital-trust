@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "DigiTrust — Digital Trust Intelligence",
+  "description": "Manually inspect webpages and selected claims for credibility signals.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "111",
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "host_permissions": ["https://digitrust.sharma-raghav.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "Analyze this page with DigiTrust",
+    "default_popup": "popup/popup.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
