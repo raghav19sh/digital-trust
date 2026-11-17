@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { calculateEvidenceScore, extractClaims, matchFactCheck } from "@/lib/verification";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -245,65 +246,37 @@ function domainSignal(domain: string | null): Component {
   return { score, weight: weights.domain_reputation, available: true, details: { hostname: host, method } };
 }
 
-function claims(text: string) {
-  return text.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter((x) => x.length > 55).slice(0, 3).map((x) => x.slice(0, 250));
-}
-
 async function factChecks(text: string) {
+  const extracted = extractClaims(text);
   const key = process.env.GOOGLE_FACT_CHECK_API_KEY;
+  const claimResults: Array<{ id: string; text: string; importance: number; status: string; score: number | null; evidence: Array<{ rating: string; publisher: string; url: string | null; relevance: number; status: string; explanation: string }> }> = [];
+  const facts: Array<{ claim: string; rating: string; publisher: string; url: string | null }> = [];
   if (!key) {
-    return {
-      component: { score: 50, weight: weights.fact_check, available: false, details: { reason: "Google Fact Check API not configured." } } as Component,
-      facts: [] as Array<{ claim: string; rating: string; publisher: string; url: string | null }>,
-    };
+    return { component: { score: 50, weight: weights.fact_check, available: false, details: { reason: 'Google Fact Check API not configured.' } } as Component, facts, claimResults: extracted.map((c) => ({ ...c, status: 'unverified', score: null, evidence: [] })), score: calculateEvidenceScore([]) };
   }
-
-  const facts: Array<{ claim: string; rating: string; publisher: string; url: string | null; score: number }> = [];
-
-  for (const query of claims(text)) {
+  for (const claim of extracted) {
+    const evidence: Array<{ rating: string; publisher: string; url: string | null; relevance: number; status: string; explanation: string }> = [];
     try {
-      const url = new URL("https://factchecktools.googleapis.com/v1alpha1/claims:search");
-      url.searchParams.set("query", query);
-      url.searchParams.set("pageSize", "5");
-      url.searchParams.set("key", key);
-
-      const res = await fetch(url);
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      for (const claim of data.claims ?? []) {
-        for (const review of claim.claimReview ?? []) {
-          const rating = String(review.textualRating ?? "Reviewed");
-          const score = /false|incorrect|misleading|fake/i.test(rating) ? 18 : /true|correct|accurate/i.test(rating) ? 72 : 50;
-          facts.push({
-            claim: String(claim.text ?? query),
-            rating,
-            publisher: String(review.publisher?.name ?? "Fact-check publisher"),
-            url: review.url ? String(review.url) : null,
-            score,
-          });
+      const url = new URL('https://factchecktools.googleapis.com/v1alpha1/claims:search');
+      url.searchParams.set('query', claim.text); url.searchParams.set('pageSize', '10'); url.searchParams.set('key', key);
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        const data = await res.json();
+        for (const result of data.claims ?? []) for (const review of result.claimReview ?? []) {
+          const reviewedClaim = String(result.text ?? ''); const rating = String(review.textualRating ?? '');
+          const matched = matchFactCheck(claim.text, reviewedClaim, rating);
+          if (matched.score === null) continue;
+          const item = { rating, publisher: String(review.publisher?.name ?? 'Fact-check publisher'), url: review.url ? String(review.url) : null, relevance: Math.round(matched.relevance * 100), status: matched.status, explanation: matched.explanation };
+          evidence.push(item); facts.push({ claim: reviewedClaim || claim.text, rating, publisher: item.publisher, url: item.url });
         }
       }
     } catch {}
+    evidence.sort((x,y) => y.relevance - x.relevance); const best = evidence[0];
+    claimResults.push({ ...claim, status: best?.status ?? 'unverified', score: best ? (best.status === 'supported' ? 100 : best.status === 'refuted' ? 0 : 50) : null, evidence: evidence.slice(0,3) });
   }
-
-  const unique = facts.filter((f, i, a) => i === a.findIndex((x) => x.claim === f.claim && x.url === f.url));
-  return {
-    component: {
-      score: unique.length ? unique.reduce((s, x) => s + x.score, 0) / unique.length : 50,
-      weight: weights.fact_check,
-      // A successful search with no matching published review is not a neutral fact-check verdict.
-      available: unique.length > 0,
-      details: {
-        claims_checked: claims(text).length,
-        matches: unique.length,
-        ...(unique.length ? {} : { reason: "No matching published fact-check was found; this is not evidence that the claims are true or false." }),
-      },
-    } as Component,
-    facts: unique.slice(0, 8).map(({ score: _score, ...fact }) => fact),
-  };
+  const score = calculateEvidenceScore(claimResults);
+  return { component: { score: score.score ?? 50, weight: weights.fact_check, available: score.assessed > 0, details: { claims_extracted: extracted.length, claims_assessed: score.assessed, claim_coverage: score.coverage, reason: score.assessed ? undefined : 'No relevant fact-checks found; claims remain unverified.' } } as Component, facts: facts.slice(0,12), claimResults, score };
 }
-
 async function coverage(text: string, domain: string | null) {
   const key = process.env.NEWS_API_KEY;
   if (!key) {
@@ -355,16 +328,15 @@ async function coverage(text: string, domain: string | null) {
   }
 }
 
-function overall(components: Record<string, Component>) {
-  // Missing integrations must not contribute their placeholder score to the result.
-  const available = Object.values(components).filter((item) => item.available);
-  const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);
-  if (totalWeight === 0) return null;
-
-  const weightedTotal = available.reduce((sum, item) => sum + item.score * item.weight, 0);
-  return Math.round((weightedTotal / totalWeight) * 10) / 10;
+function overall(components: Record<string, Component>, claimScore: number | null) {
+  // Never infer factual credibility from writing style or missing integrations.
+  if (claimScore === null) return null;
+  const support = [components.news_coverage, components.domain_reputation].filter((x) => x.available);
+  const supportWeight = support.reduce((sum,x) => sum + x.weight, 0);
+  const supportScore = supportWeight ? support.reduce((sum,x) => sum + x.score*x.weight, 0)/supportWeight : null;
+  const score = supportScore === null ? claimScore : claimScore*0.7 + supportScore*0.3;
+  return Math.round(clamp(score)*10)/10;
 }
-
 function evidenceCoverage(components: Record<string, Component>) {
   const configuredWeight = Object.values(components).reduce((sum, item) => sum + item.weight, 0);
   const availableWeight = Object.values(components)
@@ -438,7 +410,7 @@ export async function POST(request: Request) {
       } as Component,
     };
 
-    const trustScore = overall(components);
+    const trustScore = overall(components, fact.score.score);
 
     return response({
       source_url: sourceUrl,
@@ -446,15 +418,19 @@ export async function POST(request: Request) {
       title,
       analysis_scope: requestedScope,
       evidence_coverage: evidenceCoverage(components),
+      claim_coverage: fact.score.coverage,
+      claims_extracted: fact.score.total,
+      claims_assessed: fact.score.assessed,
+      claim_results: fact.claimResults,
       trust_score: trustScore,
       level: trustScore === null ? "unknown" : trustScore >= 70 ? "good" : trustScore >= 40 ? "warn" : "bad",
-      verdict: trustScore === null ? "Insufficient evidence to calculate a score" : trustScore >= 70 ? "Stronger credibility signals" : trustScore >= 40 ? "Mixed signals — verify independently" : "Weak credibility signals — verify carefully",
-      summary: languageResult.flags.length
-        ? "Several language patterns deserve scrutiny before the content is treated as established fact."
-        : "No major manipulative-language pattern was detected by the heuristic analyzer.",
+      verdict: trustScore === null ? "Insufficient claim-level evidence — no credibility score" : trustScore >= 70 ? "Evidence supports the assessed claims" : trustScore >= 40 ? "Mixed claim-level evidence" : "Evidence contradicts important claims",
+      summary: trustScore === null ? "No sufficiently relevant published fact-checks were found. Claims remain unverified; language and source signals cannot establish factual accuracy." : "Score is based on claim-level fact-check matches and supporting source signals. Language warnings are separate.",
       components,
       red_flags: languageResult.flags,
       verified_facts: fact.facts,
+      claim_results: fact.claimResults,
+      language_diagnostics: { score: languageResult.score, red_flags: languageResult.flags },
       sources: news.sources,
     });
   } catch (error) {
