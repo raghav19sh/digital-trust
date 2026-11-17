@@ -239,6 +239,50 @@ async function runForensics(buffer: Buffer, mime: string, deepfake = 0) {
   return combineForensics(metadata, frequency, deepfake);
 }
 
+function isPublicAddress(address: string) {
+  if (net.isIPv4(address)) {
+    const [a,b] = address.split('.').map(Number);
+    if (a === 10 || a === 127 || a === 0 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return false;
+    return true;
+  }
+  if (!net.isIPv6(address)) return false;
+  const value = address.toLowerCase();
+  return (/^[23]/.test(value) && !value.startsWith('2001:db8:'));
+}
+
+async function fetchRemoteImage(input: string) {
+  let current = input;
+  for (let hop = 0; hop <= 3; hop++) {
+    const url = new URL(current);
+    if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only public HTTP/HTTPS media URLs are supported.');
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    const addresses = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some(item => !isPublicAddress(item.address))) throw new Error('Media URL resolves to a private or non-public address.');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    let response: Response;
+    try { response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': 'DigiTrust/2.0', accept: 'image/jpeg,image/png,image/webp,image/gif' } }); }
+    finally { clearTimeout(timeout); }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (!location) throw new Error('Media URL returned an invalid redirect.');
+      current = new URL(location, url).toString();
+      continue;
+    }
+    if (!response.ok) throw new Error('Could not retrieve the remote image (HTTP ' + response.status + ').');
+    const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    if (!['image/jpeg','image/png','image/webp','image/gif'].includes(mime)) throw new Error('The URL did not return a supported image.');
+    const declared = Number(response.headers.get('content-length') || 0);
+    if (declared > MAX_REMOTE_BYTES) { await response.body?.cancel(); throw new Error('Remote image exceeds the 4 MB analysis limit.'); }
+    if (!response.body) throw new Error('Remote image response was empty.');
+    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+    try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > MAX_REMOTE_BYTES) { await reader.cancel(); throw new Error('Remote image exceeds the 4 MB analysis limit.'); } chunks.push(part.value); } }
+    finally { reader.releaseLock(); }
+    return { buffer: Buffer.concat(chunks.map(chunk => Buffer.from(chunk))), mime, url: current };
+  }
+  throw new Error('Too many redirects while retrieving remote media.');
+}
 function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: ForensicSignals, modelVerdict: MediaAnalysis["verdict"], modelConfidence: number): Pick<MediaAnalysis, "verdict" | "confidence" | "explanation"> {
   const generatorProvenance = forensic.metadata.anomaly >= 80;
   const margin = ai - notAi;
@@ -360,7 +404,13 @@ export async function POST(request: Request) {
       try { url = new URL(mediaUrl); } catch { return response({ error: "Invalid media URL." }, 400); }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
       mediaType = /\.(mp4|webm|m4v|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
-      mediaInput = mediaUrl;
+      if (mediaType === "image") {
+        const remote = await fetchRemoteImage(mediaUrl);
+        forensic = await runForensics(remote.buffer, remote.mime);
+        mediaInput = "data:" + remote.mime + ";base64," + remote.buffer.toString("base64");
+      } else {
+        mediaInput = mediaUrl;
+      }
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
     }
