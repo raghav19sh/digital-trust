@@ -23,7 +23,10 @@ type ComponentResult = {
 type Result = {
   domain: string | null;
   title: string | null;
-  trust_score: number;
+  trust_score: number | null;
+  claims_extracted?: number;
+  claims_assessed?: number;
+  claim_results?: Array<{ id: string; text: string; importance: number; status: string; score: number | null; evidence: Array<{ rating: string; publisher: string; url: string | null; relevance: number; status: string; explanation: string }> }>;
   level: Level;
   verdict: string;
   summary: string;
@@ -52,7 +55,10 @@ function Pill({ level }: { level: Level }) {
   return <span className={`pill ${level}`}>{label}</span>;
 }
 
-function Score({ score }: { score: number }) {
+function Score({ score }: { score: number | null }) {
+  if (score === null) {
+    return <div className="score score-unknown"><div className="scoretext"><b>—</b><span>UNVERIFIED</span></div></div>;
+  }
   return (
     <div className="score" style={{ "--pct": score } as CSSProperties}>
       <div className="scoretext">
@@ -267,7 +273,7 @@ export default function Home() {
                   {result.title ? ` · ${result.title}` : ""}
                 </div>
                 <div className="verdict">{result.verdict}</div>
-                <Pill level={result.level} />
+                {result.trust_score !== null && <Pill level={result.level} />}
                 <p className="small muted">{result.summary}</p>
                 {result.source_url && (
                   <a
@@ -280,6 +286,31 @@ export default function Home() {
                   </a>
                 )}
               </div>
+            </div>
+
+            <div className="card">
+              <h2>Claim-level verification</h2>
+              <div className="small muted">
+                {result.claims_extracted ?? result.claim_results?.length ?? 0} claims extracted · {result.claims_assessed ?? 0} assessed
+              </div>
+              {result.claim_results?.length ? (
+                <ul className="list">
+                  {result.claim_results.map((claim) => (
+                    <li key={claim.id}>
+                      <strong>{claim.status.replaceAll("_", " ").toUpperCase()}</strong>
+                      <div>{claim.text}</div>
+                      {claim.evidence?.map((evidence, index) => (
+                        <div className="small muted" key={index}>
+                          {evidence.publisher} · {evidence.rating} · {evidence.relevance}% match{" "}
+                          {evidence.url && <a href={evidence.url} target="_blank" rel="noreferrer">Open fact-check <ExternalLink size={12} /></a>}
+                        </div>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="small muted">No factual claims were extracted. Try pasting the complete sentence or paragraph.</p>
+              )}
             </div>
 
             <div className="card">

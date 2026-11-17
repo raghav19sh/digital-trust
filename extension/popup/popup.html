@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DigiTrust</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <div class="brand"><span class="mark">◇</span><div><strong>DigiTrust</strong><small>Digital Trust Intelligence</small></div></div>
+      <span class="manual">MANUAL MODE</span>
+    </header>
+    <section class="intro">
+      <h1>Check before you trust.</h1>
+      <p>Select a claim on the page to verify it with its surrounding sentence, or analyze the full page when nothing is selected.</p>
+    </section>
+    <button id="analyze" class="primary">Analyze selection / page</button>
+    <p id="status" class="status" role="status">Nothing analyzed yet. Analysis starts only when you ask.</p>
+    <section id="result" class="result" hidden aria-live="polite">
+      <div class="score-row">
+        <div class="score-wrap"><span id="score">—</span><small>TRUST SIGNAL</small></div>
+        <div class="verdict"><strong id="verdict">Analysis</strong><span id="domain"></span></div>
+      </div>
+      <p id="summary" class="summary"></p>
+      <div id="components" class="components"></div>
+      <div id="claim-results" class="evidence"></div>
+      <div id="flags" class="evidence"></div>
+      <div id="facts" class="evidence"></div>
+      <div id="sources" class="evidence"></div>
+      <p class="disclaimer">A trust score is a triage signal, not a determination of truth.</p>
+    </section>
+    <footer><a href="https://digitrust.sharma-raghav.com/how-it-works" target="_blank" rel="noreferrer">How it works</a><span>·</span><a href="https://digitrust.sharma-raghav.com/privacy" target="_blank" rel="noreferrer">Privacy</a></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
