@@ -2,7 +2,7 @@ const API_URL = "https://digitrust.sharma-raghav.com/api/analyze";
 const $ = (id) => document.getElementById(id);
 
 function extractPage() {
-  const clean = (value) => (value || "").replace(/\\s+/g, " ").trim();
+  const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
   const selected = clean(window.getSelection()?.toString());
   const candidates = [...document.querySelectorAll("article, main, [role='main']")];
   const root = candidates.sort((a, b) => b.innerText.length - a.innerText.length)[0] || document.body;
