@@ -87,7 +87,7 @@ async function readRequestJson(request: Request) {
   } finally {
     reader.releaseLock();
   }
-  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")) as { url?: unknown; text?: unknown };
+  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")) as { url?: unknown; text?: unknown; title?: unknown };
 }
 
 function stripHtml(html: string) {
@@ -374,11 +374,28 @@ export async function POST(request: Request) {
     let title: string | null = null;
 
     if (inputUrl) {
-      const article = await fetchArticle(inputUrl);
-      sourceUrl = article.url;
-      domain = article.domain;
-      title = article.title;
-      text = article.text;
+      // Browser clients may provide extracted text for client-rendered pages and social posts.
+      // Preserve URL/domain metadata without server-fetching the page in that case.
+      if (text.length >= 40) {
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(inputUrl);
+        } catch {
+          throw new Error("Malformed URL.");
+        }
+        if (!/^https?:$/.test(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+          throw new Error("Only public HTTP/HTTPS URLs are allowed.");
+        }
+        sourceUrl = parsedUrl.toString();
+        domain = parsedUrl.hostname.toLowerCase();
+        title = typeof body.title === "string" ? clean(body.title).slice(0, 300) : null;
+      } else {
+        const article = await fetchArticle(inputUrl);
+        sourceUrl = article.url;
+        domain = article.domain;
+        title = article.title;
+        text = article.text;
+      }
     }
 
     if (text.length < 40) throw new Error("Provide a full URL or at least 40 characters of text.");
