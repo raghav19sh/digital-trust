@@ -297,11 +297,12 @@ function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: Fore
         : "The model signals are not decisive enough for a responsible classification. More than one independent detector or provenance evidence is needed.";
   return { verdict, confidence, explanation };
 }
-async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaInput: string) {
+async function runHiveDetection(key: string, mediaType: "image" | "video", mediaInput: string) {
   const form = new FormData();
   form.set("user_id", "digitrust-public");
   form.set("post_id", crypto.randomUUID());
-  form.set("models", JSON.stringify(["ai_generated_media", "deepfake"]));
+  form.append("models", "ai_generated_media");
+  form.append("models", "deepfake");
   if (mediaInput.startsWith("data:")) {
     const match = mediaInput.match(/^data:([^;]+);base64,(.+)$/s);
     if (!match) throw new Error("Invalid media payload.");
@@ -389,7 +390,7 @@ export async function POST(request: Request) {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
     }
 
-    const analysis = await runVlmAnalysis(key, mediaType, mediaInput);
+    const analysis = await runHiveDetection(key, mediaType, mediaInput);
     forensic.face = { available: true, score: analysis.deepfake, source: "Hive dedicated deepfake classifier" };
 
     const fused = fuseVerdict(analysis.ai, analysis.notAi, analysis.deepfake, forensic, analysis.modelVerdict, analysis.confidence);
