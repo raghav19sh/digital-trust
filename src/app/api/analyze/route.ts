@@ -87,7 +87,7 @@ async function readRequestJson(request: Request) {
   } finally {
     reader.releaseLock();
   }
-  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")) as { url?: unknown; text?: unknown; title?: unknown };
+  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8")) as { url?: unknown; text?: unknown; title?: unknown; mode?: unknown };
 }
 
 function stripHtml(html: string) {
@@ -292,8 +292,13 @@ async function factChecks(text: string) {
     component: {
       score: unique.length ? unique.reduce((s, x) => s + x.score, 0) / unique.length : 50,
       weight: weights.fact_check,
-      available: true,
-      details: { claims_checked: claims(text).length, matches: unique.length },
+      // A successful search with no matching published review is not a neutral fact-check verdict.
+      available: unique.length > 0,
+      details: {
+        claims_checked: claims(text).length,
+        matches: unique.length,
+        ...(unique.length ? {} : { reason: "No matching published fact-check was found; this is not evidence that the claims are true or false." }),
+      },
     } as Component,
     facts: unique.slice(0, 8).map(({ score: _score, ...fact }) => fact),
   };
@@ -330,7 +335,16 @@ async function coverage(text: string, domain: string | null) {
     }
 
     return {
-      component: { score: sources.length ? Math.min(100, 40 + sources.length * 10) : 50, weight: weights.news_coverage, available: true, details: { independent_sources: sources.length } } as Component,
+      component: {
+        score: sources.length ? Math.min(100, 40 + sources.length * 10) : 50,
+        weight: weights.news_coverage,
+        // No matching coverage is insufficient evidence, not a negative credibility score.
+        available: sources.length > 0,
+        details: {
+          independent_sources: sources.length,
+          ...(sources.length ? {} : { reason: "No matching independent coverage was found; absence of coverage alone does not establish falsity." }),
+        },
+      } as Component,
       sources: sources.slice(0, 6),
     };
   } catch {
