@@ -8,7 +8,7 @@ A Manifest V3 companion for the existing DigiTrust Next.js application. This fir
 - Extracts readable page text to check that the page has enough content.
 - Sends the page URL to the existing `POST /api/analyze` endpoint, preserving the existing backend and scoring pipeline.
 - Right-click selected text and choose **Verify selection with DigiTrust**.
-- Shows the returned score, signal breakdown, language flags, fact-checks and coverage.
+- Extracts ranked factual claims and checks them against published Google Fact Check reviews when configured.\n- Displays each claim as supported, refuted, partially supported or unverified, with matched review details.\n- Produces a numeric factual score only when at least one sufficiently relevant claim-level fact-check is found. Unknown claims are excluded; if none are verified, the result is 'insufficient evidence' rather than an invented neutral score.\n- Keeps domain, independent coverage and language patterns as separate diagnostics; language style cannot increase factual credibility.
 - Stores the latest result locally in `chrome.storage.local`.
 
 ## Load unpacked in Chrome
@@ -38,7 +38,7 @@ No content script is registered, no automatic page monitoring runs, and no webpa
 
 - The existing API fetches article URLs itself. Pages that block server-side fetching, require login, or render content only in the browser may not be analyzable through URL mode.
 - Selected-text analysis sends the selected passage together with its source URL. The backend analyzes the supplied passage without replacing it with a server-fetched full page, while retaining the page domain as a source-reputation signal.
-- The API reports evidence coverage and calculates the weighted score only from available signals. A search with no matching fact-check or independent coverage is shown as unavailable rather than assigned a misleading neutral score.
+- The API now uses an evidence-first claim score. Domain reputation, article coverage and language heuristics are diagnostics only; they cannot substitute for claim verification. A fact-check search result is accepted only when lexical claim relevance passes a conservative threshold.
 - Image/video and OCR analysis are not included in this MVP.
 - The UI displays the existing API's trust score as a triage signal, not a truth verdict.
 
