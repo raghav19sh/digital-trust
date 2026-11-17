@@ -7,7 +7,7 @@ function extractPage() {
   const candidates = [...document.querySelectorAll("article, main, [role='main']")];
   const root = candidates.sort((a, b) => b.innerText.length - a.innerText.length)[0] || document.body;
   const text = selected.length >= 40 ? selected : clean(root.innerText);
-  return { text: text.slice(0, 20000), title: document.title, url: location.href };
+  return { text: text.slice(0, 20000), title: document.title, url: location.href, mode: selected.length >= 40 ? "selection" : "page" };
 }
 
 function render(data) {
@@ -20,8 +20,8 @@ function render(data) {
     $("summary").textContent = "";
     return;
   }
-  $("status").textContent = "Analysis complete.";
-  $("score").textContent = Math.round(data.trust_score);
+  $("status").textContent = `Analysis complete · ${data.analysis_scope === "selection" ? "Selected text" : "Full page"} · ${Number.isFinite(data.evidence_coverage) ? data.evidence_coverage + "% evidence coverage" : "Evidence coverage unavailable"}.`;
+  $("score").textContent = Number.isFinite(data.trust_score) ? Math.round(data.trust_score) : "—";
   $("verdict").textContent = data.verdict || "Analysis complete";
   $("domain").textContent = data.domain || data.source_url || "Selected text";
   $("summary").textContent = data.summary || "";
@@ -62,7 +62,7 @@ $("analyze").addEventListener("click", async () => {
     if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("This page cannot be analyzed. Open a normal HTTP or HTTPS webpage.");
     const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage });
     if (!page?.text || page.text.length < 40) throw new Error("Not enough readable text found. Select a longer claim or open an article.");
-    const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: page.url, text: page.text, title: page.title }) });
+    const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: page.url, text: page.text, title: page.title, mode: page.mode }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Analysis request failed.");
     await chrome.storage.local.set({ latestAnalysis: { ...data, analyzedAt: Date.now() } });
