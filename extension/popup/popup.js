@@ -25,6 +25,7 @@ function render(data) {
   $("verdict").textContent = data.verdict || "Analysis complete";
   $("domain").textContent = data.domain || data.source_url || "Selected text";
   $("summary").textContent = data.summary || "";
+  renderList("claim-results", "Claim-level verification", data.claim_results || [], (x) => `${x.status.replaceAll("_", " ")} · ${x.text}${x.evidence?.length ? " · " + x.evidence[0].publisher + ": " + x.evidence[0].rating : ""}`);
   const labels = { fact_check: "Fact checks", domain_reputation: "Source reputation", news_coverage: "Independent coverage", language_signals: "Language signals" };
   $("components").replaceChildren();
   for (const [key, label] of Object.entries(labels)) {
