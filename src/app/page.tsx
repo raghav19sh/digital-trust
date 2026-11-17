@@ -9,8 +9,6 @@ import {
   FileText,
   Info,
   Link2,
-  Search,
-  ShieldCheck,
 } from "lucide-react";
 
 type Level = "good" | "warn" | "bad";
@@ -54,111 +52,49 @@ function Pill({ level }: { level: Level }) {
 
 function Score({ score }: { score: number }) {
   return (
-    <div className="score" style={{ "--pct": score } as CSSProperties}>
-      <div className="scoretext">
-        <b>{Math.round(score)}</b>
-        <span>TRUST SCORE</span>
-      </div>
-    </div>
-  );
-}
-
-export default function Home() {
-  const [mode, setMode] = useState<"url" | "text">("url");
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [result, setResult] = useState<Result | null>(null);
-
-  async function analyze() {
-    setError("");
-    setResult(null);
-    const value = input.trim();
-
-    if (!value) {
-      setError("Enter a URL or paste text first.");
-      return;
-    }
-    if (mode === "text" && value.length < 40) {
-      setError("Paste at least 40 characters so the analyzer has enough context.");
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(mode === "url" ? { url: value } : { text: value }),
-      });
-      const data = (await response.json()) as Result & { error?: string };
-      if (!response.ok) throw new Error(data.error || "Analysis failed.");
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") void analyze();
-  }
-
-  return (
     <>
       <main id="main-content" className="container">
         <nav className="nav">
           <Link className="brand" href="/">
-            <span className="mark">
-              <ShieldCheck size={18} />
-            </span>
+            <span className="mark" aria-hidden="true" />
             <span>DigiTrust</span>
           </Link>
           <div className="navlinks">
-            <a href="/how-it-works">How it works</a>
+            <a href="/how-it-works">Methodology</a>
+            <a href="#analysis">Media Check</a>
+            <a href="#signals">Evaluation</a>
+            <a href="#analysis">Security</a>
             <a href="/privacy">Privacy</a>
-            <a
-              href="https://sharma-raghav.com"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Raghav Sharma ↗
-            </a>
           </div>
         </nav>
 
         <section className="hero">
-          <span className="eyebrow">
-            <ShieldCheck size={13} /> Digital Trust Intelligence
-          </span>
-          <h1>Before you share it, test the signal.</h1>
+          <span className="eyebrow">Multimedia trust analysis</span>
+          <h1>Truth deserves more than a glance.</h1>
           <p>
-            Analyze an article or claim for credibility signals across source
-            reputation, published fact-checks, independent coverage, and
-            manipulative language.
+            Examine the signals behind online content — source reputation,
+            published fact-checks, independent coverage and the language used
+            to shape a claim.
           </p>
         </section>
 
-        <section className="analyzer">
-          <div className="tabs">
+        <section className="analyzer" id="analysis" aria-label="Article analysis">
+          <div className="tabs" role="tablist" aria-label="Analysis input type">
             <button
               className={`tab ${mode === "url" ? "active" : ""}`}
-              onClick={() => {
-                setMode("url");
-                setError("");
-              }}
+              role="tab"
+              aria-selected={mode === "url"}
+              onClick={() => { setMode("url"); setError(""); }}
             >
-              <Link2 size={13} /> Article URL
+              <Link2 size={15} /> Article URL
             </button>
             <button
               className={`tab ${mode === "text" ? "active" : ""}`}
-              onClick={() => {
-                setMode("text");
-                setError("");
-              }}
+              role="tab"
+              aria-selected={mode === "text"}
+              onClick={() => { setMode("text"); setError(""); }}
             >
-              <FileText size={13} /> Paste text
+              <FileText size={15} /> Paste text
             </button>
           </div>
 
@@ -167,28 +103,15 @@ export default function Home() {
               <input
                 className="input"
                 value={input}
-                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                  setInput(event.target.value)
-                }
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="https://example.com/news/article"
                 inputMode="url"
                 autoComplete="url"
+                aria-label="Article URL"
               />
-              <button
-                className="btn"
-                onClick={() => void analyze()}
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner" /> Analyzing
-                  </>
-                ) : (
-                  <>
-                    <Search size={16} /> Analyze
-                  </>
-                )}
+              <button className="btn" onClick={() => void analyze()} disabled={loading}>
+                {loading ? <><span className="spinner" /> Analyzing</> : <>Analyze <span aria-hidden="true">→</span></>}
               </button>
             </div>
           ) : (
@@ -196,65 +119,46 @@ export default function Home() {
               <textarea
                 className="textarea"
                 value={input}
-                onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                  setInput(event.target.value)
-                }
+                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setInput(event.target.value)}
                 placeholder="Paste the article, claim, or post you want to examine..."
+                aria-label="Text to analyze"
               />
               <div className="inputrow compact">
-                <span className="hint">
-                  The public interface is stateless. Pasted content is sent only
-                  to the analysis request.
-                </span>
-                <button
-                  className="btn"
-                  onClick={() => void analyze()}
-                  disabled={loading}
-                >
-                  {loading ? (
-                    <>
-                      <span className="spinner" /> Analyzing
-                    </>
-                  ) : (
-                    "Analyze text"
-                  )}
+                <span className="hint">Pasted content is sent only with this analysis request.</span>
+                <button className="btn" onClick={() => void analyze()} disabled={loading}>
+                  {loading ? <><span className="spinner" /> Analyzing</> : "Analyze text"}
                 </button>
               </div>
             </>
           )}
 
           <div className="notice">
-            <Info size={13} /> A trust score is a <strong>signal, not a verdict</strong>.
-            Missing external data is shown as unavailable instead of being
-            disguised as positive evidence.
+            <Info size={14} />
+            <span>A trust score is a <strong>signal, not a verdict</strong>. Missing external data is shown as unavailable rather than treated as positive evidence.</span>
           </div>
 
-          {error && (
-            <div className="error">
-              <AlertTriangle size={14} /> {error}
-            </div>
-          )}
+          {error && <div className="error"><AlertTriangle size={14} /> {error}</div>}
         </section>
 
         {!result && (
-          <div className="grid">
+          <section className="grid" id="signals" aria-label="Analysis methodology">
             <div className="stat">
-              <strong>01 · Source</strong>
-              <span>Inspect hostname and basic source signals.</span>
+              <strong>01&nbsp; / &nbsp;Source reputation</strong>
+              <span>Inspect the publisher and the reliability signals associated with its domain.</span>
             </div>
             <div className="stat">
-              <strong>02 · Evidence</strong>
-              <span>Match claims against published fact-checks when available.</span>
+              <strong>02&nbsp; / &nbsp;Fact-checks</strong>
+              <span>Compare claims with published fact-checks when a relevant match is available.</span>
             </div>
             <div className="stat">
-              <strong>03 · Coverage</strong>
-              <span>Look for independent reporting around the claim.</span>
+              <strong>03&nbsp; / &nbsp;Independent coverage</strong>
+              <span>Look for corroboration from reporting beyond the original source.</span>
             </div>
             <div className="stat">
-              <strong>04 · Language</strong>
-              <span>Flag clickbait, absolutes, emotional framing, and attribution gaps.</span>
+              <strong>04&nbsp; / &nbsp;Language signals</strong>
+              <span>Identify emotional framing, absolute claims and attribution gaps.</span>
             </div>
-          </div>
+          </section>
         )}
 
         {result && (
@@ -262,20 +166,12 @@ export default function Home() {
             <div className="card scorecard">
               <Score score={result.trust_score} />
               <div>
-                <div className="muted small">
-                  {result.domain || "Text analysis"}
-                  {result.title ? ` · ${result.title}` : ""}
-                </div>
+                <div className="muted small">{result.domain || "Text analysis"}{result.title ? ` · ${result.title}` : ""}</div>
                 <div className="verdict">{result.verdict}</div>
                 <Pill level={result.level} />
                 <p className="small muted">{result.summary}</p>
                 {result.source_url && (
-                  <a
-                    className="source-link"
-                    href={result.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
+                  <a className="source-link" href={result.source_url} target="_blank" rel="noreferrer">
                     View analyzed page <ExternalLink size={12} />
                   </a>
                 )}
@@ -292,18 +188,10 @@ export default function Home() {
                     <div key={item.key} className="barrow">
                       <span>{item.title}</span>
                       <div>
-                        <div className="bar">
-                          <i style={{ width: `${score}%` }} />
-                        </div>
-                        <div className="hint">
-                          {component?.available
-                            ? "Signal available"
-                            : "Unavailable — neutral contribution"}
-                        </div>
+                        <div className="bar"><i style={{ width: `${score}%` }} /></div>
+                        <div className="hint">{component?.available ? "Signal available" : "Unavailable — neutral contribution"}</div>
                       </div>
-                      <strong>
-                        {component?.available ? Math.round(score) : "—"}
-                      </strong>
+                      <strong>{component?.available ? Math.round(score) : "—"}</strong>
                     </div>
                   );
                 })}
@@ -313,19 +201,13 @@ export default function Home() {
             <div className="two">
               <div className="card">
                 <h2>Linguistic red flags</h2>
-                {result.red_flags?.length ? (
-                  result.red_flags.map((flag, index) => (
-                    <div className="flag" key={`${flag.category}-${index}`}>
-                      <strong>{flag.category}</strong>
-                      <div className="small muted">“{flag.excerpt}”</div>
-                      <div className="small flag-copy">{flag.explanation}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="small muted">
-                    <CheckCircle2 size={15} /> No obvious linguistic red flags detected.
+                {result.red_flags?.length ? result.red_flags.map((flag, index) => (
+                  <div className="flag" key={`${flag.category}-${index}`}>
+                    <strong>{flag.category}</strong>
+                    <div className="small muted">“{flag.excerpt}”</div>
+                    <div className="small flag-copy">{flag.explanation}</div>
                   </div>
-                )}
+                )) : <div className="small muted"><CheckCircle2 size={15} /> No obvious linguistic red flags detected.</div>}
               </div>
 
               <div className="card">
@@ -337,25 +219,12 @@ export default function Home() {
                         <strong>{fact.claim}</strong>
                         <div className="small muted">
                           {fact.publisher} · {fact.rating}{" "}
-                          {fact.url && (
-                            <a
-                              href={fact.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-label="Open fact-check"
-                            >
-                              <ExternalLink size={12} />
-                            </a>
-                          )}
+                          {fact.url && <a href={fact.url} target="_blank" rel="noreferrer" aria-label="Open fact-check"><ExternalLink size={12} /></a>}
                         </div>
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <div className="small muted">
-                    No matching published fact-checks were returned.
-                  </div>
-                )}
+                ) : <div className="small muted">No matching published fact-checks were returned.</div>}
               </div>
             </div>
 
@@ -366,13 +235,7 @@ export default function Home() {
                   <div className="source" key={`${source.url}-${index}`}>
                     <strong>{source.source}</strong>
                     <div className="small muted">{source.title}</div>
-                    <a
-                      href={source.url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open source <ExternalLink size={12} />
-                    </a>
+                    <a href={source.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={12} /></a>
                   </div>
                 ))}
               </div>
@@ -383,10 +246,12 @@ export default function Home() {
 
       <footer className="footer">
         <div className="container">
-          DigiTrust is a media-literacy aid. It does not determine objective
-          truth and should not replace primary-source verification.
+          <strong style={{ color: "var(--accent)", fontFamily: "var(--serif)", fontSize: 18 }}>DigiTrust</strong>
+          <span style={{ marginLeft: 18 }}>Multimedia forensics · Explainable analysis · Responsible AI</span>
+          <p>Digital content should be examined with evidence, context and care. A trust score is an analytical signal, not a final determination of truth.</p>
         </div>
       </footer>
     </>
   );
 }
+

@@ -5,7 +5,7 @@ export default function Privacy() {
     <main id="main-content" className="container page">
       <nav className="nav">
         <Link className="brand" href="/">
-          <span className="mark">DT</span>
+          <span className="mark" aria-hidden="true" />
           DigiTrust
         </Link>
         <Link className="muted" href="/">← Analyzer</Link>
