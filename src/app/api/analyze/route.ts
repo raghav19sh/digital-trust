@@ -342,13 +342,21 @@ async function coverage(text: string, domain: string | null) {
 }
 
 function overall(components: Record<string, Component>) {
-  let total = 0;
-  let weight = 0;
-  for (const item of Object.values(components)) {
-    total += item.score * item.weight;
-    weight += item.weight;
-  }
-  return Math.round((total / weight) * 10) / 10;
+  // Missing integrations must not contribute their placeholder score to the result.
+  const available = Object.values(components).filter((item) => item.available);
+  const totalWeight = available.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight === 0) return null;
+
+  const weightedTotal = available.reduce((sum, item) => sum + item.score * item.weight, 0);
+  return Math.round((weightedTotal / totalWeight) * 10) / 10;
+}
+
+function evidenceCoverage(components: Record<string, Component>) {
+  const configuredWeight = Object.values(components).reduce((sum, item) => sum + item.weight, 0);
+  const availableWeight = Object.values(components)
+    .filter((item) => item.available)
+    .reduce((sum, item) => sum + item.weight, 0);
+  return configuredWeight ? Math.round((availableWeight / configuredWeight) * 100) : 0;
 }
 
 export async function POST(request: Request) {
@@ -368,6 +376,7 @@ export async function POST(request: Request) {
     }
     const body = await readRequestJson(request);
     const inputUrl = typeof body.url === "string" ? body.url.trim() : "";
+    const requestedScope = body.mode === "selection" ? "selection" : "page";
     let text = typeof body.text === "string" ? clean(body.text) : "";
     let sourceUrl: string | null = null;
     let domain: string | null = null;
@@ -421,9 +430,11 @@ export async function POST(request: Request) {
       source_url: sourceUrl,
       domain,
       title,
+      analysis_scope: requestedScope,
+      evidence_coverage: evidenceCoverage(components),
       trust_score: trustScore,
-      level: trustScore >= 70 ? "good" : trustScore >= 40 ? "warn" : "bad",
-      verdict: trustScore >= 70 ? "Stronger credibility signals" : trustScore >= 40 ? "Mixed signals — verify independently" : "Weak credibility signals — verify carefully",
+      level: trustScore === null ? "unknown" : trustScore >= 70 ? "good" : trustScore >= 40 ? "warn" : "bad",
+      verdict: trustScore === null ? "Insufficient evidence to calculate a score" : trustScore >= 70 ? "Stronger credibility signals" : trustScore >= 40 ? "Mixed signals — verify independently" : "Weak credibility signals — verify carefully",
       summary: languageResult.flags.length
         ? "Several language patterns deserve scrutiny before the content is treated as established fact."
         : "No major manipulative-language pattern was detected by the heuristic analyzer.",
