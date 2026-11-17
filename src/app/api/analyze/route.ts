@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import dns from "node:dns/promises";
 import net from "node:net";
-import { calculateEvidenceScore, extractClaims, matchFactCheck } from "@/lib/verification";
+import { calculateEvidenceScore, extractClaims, matchFactCheck } from "../../../lib/verification";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
