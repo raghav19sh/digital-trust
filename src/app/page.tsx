@@ -257,5 +257,3 @@ function Score({ score }: { score: number }) {
   );
 }
 
-  );
-}
