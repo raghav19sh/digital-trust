@@ -337,7 +337,7 @@ function parseSightengineFrame(value: unknown): SightengineFrame | null {
 }
 async function runSightengineDetection(apiUser: string, apiSecret: string, mediaType: "image" | "video", bytes: Buffer, mime: string) {
   const form = new FormData();
-  form.set("media", new Blob([bytes], { type: mime }), mediaType === "video" ? "digitrust-video" : "digitrust-image");
+  form.set("media", new Blob([Uint8Array.from(bytes)], { type: mime }), mediaType === "video" ? "digitrust-video" : "digitrust-image");
   form.set("models", "genai,deepfake");
   form.set("api_user", apiUser);
   form.set("api_secret", apiSecret);
