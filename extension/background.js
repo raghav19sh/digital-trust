@@ -14,7 +14,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     const response = await fetch(API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: tab?.url, title: tab?.title, text: info.selectionText.slice(0, 20000) })
+      body: JSON.stringify({ url: tab?.url, title: tab?.title, text: info.selectionText.slice(0, 20000), mode: "selection" })
     });
     const data = await response.json();
     await chrome.storage.local.set({
