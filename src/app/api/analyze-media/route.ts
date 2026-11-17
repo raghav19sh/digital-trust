@@ -60,15 +60,6 @@ function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
 }
 
-function pct(value: unknown) {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.round(clamp(n, 0, 1) * 1000) / 10 : 0;
-}
-
-function getStatusMessage(data: any) {
-  return data?.message || data?.error?.message || data?.error || data?.status?.message || data?.status?.[0]?.status?.message || data?.detail;
-}
-
 
 function ascii(buffer: Buffer, start: number, length: number) {
   return buffer.subarray(start, start + length).toString("latin1");
@@ -299,6 +290,44 @@ function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: Fore
         : "The model signals are not decisive enough for a responsible classification. More than one independent detector or provenance evidence is needed.";
   return { verdict, confidence, explanation };
 }
+type HiveClass = { class?: unknown; score?: unknown };
+type HiveRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is HiveRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function collectHiveClasses(value: unknown, groups: HiveClass[][]): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectHiveClasses(entry, groups));
+    return;
+  }
+  if (!isRecord(value)) return;
+  if (Array.isArray(value.classes)) {
+    groups.push(value.classes.filter(isRecord) as HiveClass[]);
+  }
+  Object.values(value).forEach((entry) => collectHiveClasses(entry, groups));
+}
+
+function collectC2pa(value: unknown): HiveRecord | null {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = collectC2pa(entry);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  if (isRecord(value.algorithmic_tags) && isRecord(value.algorithmic_tags.c2pa)) {
+    return value.algorithmic_tags.c2pa;
+  }
+  for (const entry of Object.values(value)) {
+    const found = collectC2pa(entry);
+    if (found) return found;
+  }
+  return null;
+}
+
 async function runHiveDetection(key: string, mediaType: "image" | "video", mediaInput: string) {
   const form = new FormData();
   form.set("user_id", "digitrust-public");
@@ -321,36 +350,41 @@ async function runHiveDetection(key: string, mediaType: "image" | "video", media
     signal: AbortSignal.timeout(55_000),
   });
   const rawText = await upstream.text();
-  let data: any;
-  try { data = JSON.parse(rawText); } catch { throw new Error("Hive detection returned an invalid response."); }
-  if (!upstream.ok || data?.error) throw new Error("Hive detection HTTP " + upstream.status + ": " + String(data?.message || data?.error || rawText).slice(0, 400));
-  const classGroups: any[][] = [];
-  const visit = (value: any) => {
-    if (!value || typeof value !== "object") return;
-    if (Array.isArray(value.classes)) classGroups.push(value.classes);
-    if (Array.isArray(value)) value.forEach(visit);
-    else Object.values(value).forEach(visit);
-  };
-  visit(data);
-  if (!classGroups.length) throw new Error("Hive did not return AI-generation classification scores. Check that the API key has the AI-generated media model enabled.");
-  const scoreFor = (classes: any[], name: string) => {
-    const found = classes.find((item: any) => String(item.class).toLowerCase() === name);
+  let data: unknown;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error("Hive detection returned an invalid response.");
+  }
+  if (!upstream.ok) {
+    const message = isRecord(data) && typeof data.message === "string" ? data.message : rawText;
+    throw new Error("Hive detection HTTP " + upstream.status + ": " + message.slice(0, 400));
+  }
+
+  const classGroups: HiveClass[][] = [];
+  collectHiveClasses(data, classGroups);
+  if (!classGroups.length) {
+    throw new Error("Hive did not return AI-generation classification scores. Check that the API key has the ai_generated_media and deepfake models enabled.");
+  }
+
+  const scoreFor = (classes: HiveClass[], name: string) => {
+    const found = classes.find((item) => typeof item.class === "string" && item.class.toLowerCase() === name);
     return found ? clamp(Number(found.score) * 100) : 0;
   };
-  const aiScores = classGroups.map(group => scoreFor(group, "ai_generated"));
-  const notAiScores = classGroups.map(group => scoreFor(group, "not_ai_generated"));
-  const deepfakeScores = classGroups.map(group => scoreFor(group, "deepfake"));
-  const ai = mediaType === "video" ? Math.max(...aiScores) : aiScores.reduce((x,y)=>x+y,0)/aiScores.length;
-  const notAi = notAiScores.reduce((x,y)=>x+y,0)/notAiScores.length;
+  const aiScores = classGroups.map((group) => scoreFor(group, "ai_generated"));
+  const notAiScores = classGroups.map((group) => scoreFor(group, "not_ai_generated"));
+  const deepfakeScores = classGroups.map((group) => scoreFor(group, "deepfake"));
+  const ai = mediaType === "video" ? Math.max(...aiScores) : aiScores.reduce((x, y) => x + y, 0) / aiScores.length;
+  const notAi = notAiScores.reduce((x, y) => x + y, 0) / notAiScores.length;
   const deepfake = Math.max(...deepfakeScores);
-  const bestSource = classGroups.flatMap(group => group)
-    .filter((item: any) => !["ai_generated","not_ai_generated","deepfake","none","inconclusive","inconclusive_video"].includes(String(item.class).toLowerCase()) && Number(item.score) >= 0.1)
-    .map((item: any) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
-    .sort((x: any,y: any)=>y.confidence-x.confidence)[0] || null;
-  const tags = data?.status?.flatMap((item: any) => item?.response?.output || [])?.map((item: any) => item?.algorithmic_tags?.c2pa).find(Boolean) || null;
+  const bestSource = classGroups.flatMap((group) => group)
+    .filter((item) => typeof item.class === "string" && !["ai_generated", "not_ai_generated", "deepfake", "none", "inconclusive", "inconclusive_video"].includes(item.class.toLowerCase()) && Number(item.score) >= 0.1)
+    .map((item) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
+    .sort((x, y) => y.confidence - x.confidence)[0] || null;
+  const c2pa = collectC2pa(data);
   const modelVerdict: MediaVerdict = ai >= 90 ? "AI_GENERATED" : deepfake >= 90 ? "AI_MANIPULATED" : notAi >= 90 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
   const confidence = Math.max(ai, notAi, deepfake);
-  return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa: tags };
+  return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa };
 }
 export async function POST(request: Request) {
   const key = process.env.HIVE_DETECTION_API_KEY?.trim();
@@ -412,10 +446,10 @@ export async function POST(request: Request) {
       likely_source: analysis.bestSource,
       provenance: {
         detected: Boolean(analysis.c2pa) || forensic.metadata.c2pa,
-        generator: analysis.c2pa?.claim_generator || null,
-        software_agent: analysis.c2pa?.actions_software_agent || forensic.metadata.software,
-        action: analysis.c2pa?.actions_action || null,
-        digital_source_type: analysis.c2pa?.actions_digital_source_type || null,
+        generator: typeof analysis.c2pa?.claim_generator === "string" ? analysis.c2pa.claim_generator : null,
+        software_agent: typeof analysis.c2pa?.actions_software_agent === "string" ? analysis.c2pa.actions_software_agent : forensic.metadata.software,
+        action: typeof analysis.c2pa?.actions_action === "string" ? analysis.c2pa.actions_action : null,
+        digital_source_type: typeof analysis.c2pa?.actions_digital_source_type === "string" ? analysis.c2pa.actions_digital_source_type : null,
       },
       detector: "Hive AI-generated media classifier + deepfake model + metadata + DCT frequency forensics",
     } satisfies MediaAnalysis);
