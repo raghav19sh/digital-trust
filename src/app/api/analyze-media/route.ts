@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
+import dns from "node:dns/promises";
+import net from "node:net";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -139,8 +141,10 @@ function extractMetadata(buffer: Buffer, mime: string): ForensicSignals["metadat
     }
   }
 
-  const suspiciousSoftware = /photoshop|lightroom|midjourney|stable diffusion|comfyui|dall[- ]?e|firefly|flux|gemini|imagen/i.test(software || "");
-  const anomaly = clamp((c2pa ? 0 : 8) + (suspiciousSoftware ? 25 : 0) + (fields.length === 0 ? 8 : 0));
+  // Missing EXIF/XMP is common after social-media recompression and is neutral.
+  // Editing software alone is not proof of synthetic generation.
+  const generatorSoftware = /midjourney|stable diffusion|comfyui|automatic1111|dall[- ]?e|adobe firefly|imagen|leonardo\.ai|ideogram|flux(?:\s|$)/i.test(software || "");
+  const anomaly = generatorSoftware ? 85 : 0;
   return {
     available: fields.length > 0 || Boolean(software) || c2pa,
     score: anomaly,
@@ -235,27 +239,28 @@ async function runForensics(buffer: Buffer, mime: string, deepfake = 0) {
   return combineForensics(metadata, frequency, deepfake);
 }
 
-function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: ForensicSignals): Pick<MediaAnalysis, "verdict" | "confidence" | "explanation"> {
-  const forensicAnomaly = Math.max(forensic.metadata.anomaly, forensic.frequency.score);
+function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: ForensicSignals, modelVerdict: MediaAnalysis["verdict"], modelConfidence: number): Pick<MediaAnalysis, "verdict" | "confidence" | "explanation"> {
+  const generatorProvenance = forensic.metadata.anomaly >= 80;
+  const margin = ai - notAi;
   let verdict: MediaAnalysis["verdict"] = "INCONCLUSIVE";
-  if (deepfake >= 90) verdict = "AI_MANIPULATED";
-  else if (ai >= 90) verdict = "AI_GENERATED";
-  else if (ai >= 70 && forensicAnomaly >= 45) verdict = "AI_GENERATED";
-  else if (notAi >= 90 && ai < 70 && forensicAnomaly < 45) verdict = "NO_STRONG_AI_SIGNAL";
-
-  const confidence = clamp(Math.round(Math.max(ai, notAi, deepfake, forensicAnomaly * 0.85)));
-  const explanation =
-    verdict === "AI_GENERATED"
-      ? ai >= 90 ? "Hive found a strong synthetic-generation signal, supported by forensic media evidence where available." : "Hive found a substantial synthetic-generation signal and the metadata/frequency evidence also shows anomalies."
-      : verdict === "AI_MANIPULATED"
-        ? "A strong face-manipulation/deepfake signal was detected."
-        : verdict === "NO_STRONG_AI_SIGNAL"
-          ? "No strong AI signal was detected, and the available forensic layers did not show a high-confidence anomaly."
-          : "Evidence is mixed. Model output and forensic signals are not strong enough for a responsible binary classification.";
-
+  // The current provider is one VLM, not a multi-model consensus.
+  // Do not require an unrelated frequency anomaly to agree with the model.
+  if (deepfake >= 70 && modelConfidence >= 55) verdict = "AI_MANIPULATED";
+  else if (generatorProvenance && ai >= 45) verdict = "AI_GENERATED";
+  else if (ai >= 65 && margin >= 15 && modelConfidence >= 55) verdict = "AI_GENERATED";
+  else if (modelVerdict === "AI_GENERATED" && ai >= 55 && modelConfidence >= 70) verdict = "AI_GENERATED";
+  else if (notAi >= 65 && ai < 45 && deepfake < 40 && modelConfidence >= 50) verdict = "NO_STRONG_AI_SIGNAL";
+  else if (modelVerdict === "NO_STRONG_AI_SIGNAL" && notAi >= 55 && ai < 50 && modelConfidence >= 65) verdict = "NO_STRONG_AI_SIGNAL";
+  const confidence = clamp(Math.round(modelConfidence));
+  const explanation = verdict === "AI_GENERATED"
+    ? "The visual model returned a strong synthetic-generation signal. Metadata and frequency checks are supporting evidence only and are not treated as independent classifiers."
+    : verdict === "AI_MANIPULATED"
+      ? "The visual model returned a strong face-manipulation/deepfake signal."
+      : verdict === "NO_STRONG_AI_SIGNAL"
+        ? "The visual model found stronger non-AI than AI signals. This is not proof that the image is authentic."
+        : "The model signals are not decisive enough for a responsible classification. More than one independent detector or provenance evidence is needed.";
   return { verdict, confidence, explanation };
 }
-
 async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaInput: string) {
   const media = mediaType === "video"
     ? { type: "media_url", media_url: { url: mediaInput, sampling: { strategy: "fps", fps: 1 }, prompt_scope: "per_frame" } }
@@ -311,14 +316,16 @@ async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaIn
   const raws = choices.map((choice: any) => parseJsonContent(choice?.message?.content)).filter((value: any) => value && typeof value === "object");
   if (!raws.length) throw new Error("Hive VLM returned no structured media analysis.");
 
-  const ai = Math.max(...raws.map((r: any) => clamp(Number(r.ai_generated) || 0)));
-  const notAi = Math.max(...raws.map((r: any) => clamp(Number(r.not_ai_generated) || 0)));
-  const deepfake = Math.max(...raws.map((r: any) => clamp(Number(r.deepfake) || 0)));
-  const confidence = Math.max(...raws.map((r: any) => clamp(Number(r.confidence) || 0)));
+  const mean = (key: string) => raws.reduce((sum: number, item: any) => sum + clamp(Number(item[key]) || 0), 0) / raws.length;
+  const ai = mean("ai_generated");
+  const notAi = mean("not_ai_generated");
+  const deepfake = mean("deepfake");
+  const confidence = mean("confidence");
   const bestSource = raws.map((r: any) => ({ name: String(r.likely_source_name || "").trim(), confidence: clamp(Number(r.likely_source_confidence) || 0) })).filter((s: any) => s.name && s.confidence > 0).sort((a: any,b: any)=>b.confidence-a.confidence)[0] || null;
 
   return {
     ai, notAi, deepfake, confidence, bestSource,
+    modelVerdict: (["AI_GENERATED","AI_MANIPULATED","NO_STRONG_AI_SIGNAL","INCONCLUSIVE"].includes(String(raws[0]?.verdict)) ? raws[0].verdict : "INCONCLUSIVE"),
     frames: mediaType === "video" ? raws.length : 1,
     explanation: String(raws[0]?.explanation || ""),
   };
@@ -361,7 +368,7 @@ export async function POST(request: Request) {
     const analysis = await runVlmAnalysis(key, mediaType, mediaInput);
     if (file instanceof File) forensic.face = { available: analysis.deepfake > 0, score: analysis.deepfake, source: "Hive V3 deepfake signal; not a separate face model" };
 
-    const fused = fuseVerdict(analysis.ai, analysis.notAi, analysis.deepfake, forensic);
+    const fused = fuseVerdict(analysis.ai, analysis.notAi, analysis.deepfake, forensic, analysis.modelVerdict, analysis.confidence);
     return response({
       verdict: fused.verdict,
       explanation: fused.explanation + (analysis.explanation ? ` Visual model note: ${analysis.explanation}` : ""),
@@ -371,6 +378,8 @@ export async function POST(request: Request) {
         not_ai_generated: Math.round(analysis.notAi * 10) / 10,
         deepfake: Math.round(analysis.deepfake * 10) / 10,
         frames_analyzed: analysis.frames,
+        model_verdict: analysis.modelVerdict,
+        model_confidence: Math.round(analysis.confidence * 10) / 10,
       },
       forensic,
       likely_source: analysis.bestSource,
