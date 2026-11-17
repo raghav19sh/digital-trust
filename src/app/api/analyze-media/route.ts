@@ -348,7 +348,7 @@ async function runHiveDetection(key: string, mediaType: "image" | "video", media
     .map((item: any) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
     .sort((x: any,y: any)=>y.confidence-x.confidence)[0] || null;
   const tags = data?.status?.flatMap((item: any) => item?.response?.output || [])?.map((item: any) => item?.algorithmic_tags?.c2pa).find(Boolean) || null;
-  const modelVerdict = ai >= 90 ? "AI_GENERATED" : deepfake >= 90 ? "AI_MANIPULATED" : notAi >= 90 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
+  const modelVerdict: MediaVerdict = ai >= 90 ? "AI_GENERATED" : deepfake >= 90 ? "AI_MANIPULATED" : notAi >= 90 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
   const confidence = Math.max(ai, notAi, deepfake);
   return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa: tags };
 }
