@@ -8,7 +8,7 @@ type Result = {
   verdict: Verdict;
   explanation: string;
   confidence: number;
-  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number };
+  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: string; model_confidence: number };
   forensic: { metadata: { available: boolean; score: number; anomaly: number; fields: string[]; software: string | null; camera: string | null; c2pa: boolean }; frequency: { available: boolean; score: number; low_energy: number; mid_energy: number; high_energy: number; high_frequency_ratio: number; note: string }; face: { available: boolean; score: number; source: string } };
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
@@ -86,6 +86,7 @@ export default function MediaPage() {
         <div><span className="section-kicker">PRIMARY CLASSIFICATION</span><h2>{verdict!.title}</h2><p>{result.explanation}</p><strong>{result.confidence}% confidence signal</strong></div>
       </div>
 
+      <div className="card"><span className="section-kicker">DETECTOR CLASSIFICATION</span><h2>{result.signals.model_verdict.replaceAll("_", " ")}</h2><p className="muted small">Dedicated Hive AI-generated media classifier · {result.signals.model_confidence}% top-class confidence. DigiTrust uses Hive’s recommended 90% starting threshold for a high-confidence direct classification; intermediate scores are interpreted with other evidence.</p></div>
       <div className="metric-grid">
         <div><span className="muted small">AI generation</span><b>{result.signals.ai_generated}%</b></div>
         <div><span className="muted small">AI manipulation / deepfake</span><b>{result.signals.deepfake}%</b></div>
@@ -93,7 +94,7 @@ export default function MediaPage() {
         <div><span className="muted small">Frames analyzed</span><b>{result.signals.frames_analyzed}</b></div>
       </div>
 
-      <div className="card"><div className="section-head"><div><span className="section-kicker">FORENSIC SIGNALS</span><h2>Metadata + frequency evidence</h2></div></div><div className="method-grid"><div><b>Metadata anomaly</b><p>{result.forensic.metadata.anomaly}% · {result.forensic.metadata.fields.length ? result.forensic.metadata.fields.join(", ") : "No readable metadata fields"}</p>{result.forensic.metadata.software&&<p className="muted small">Software: {result.forensic.metadata.software}</p>}</div><div><b>Frequency fingerprint</b><p>{result.forensic.frequency.score}% heuristic anomaly</p><p className="muted small">High-frequency energy: {result.forensic.frequency.high_frequency_ratio}%</p></div><div><b>Face / deepfake</b><p>{result.forensic.face.score}% model signal</p><p className="muted small">{result.forensic.face.source}</p></div><div><b>Interpretation</b><p>{result.forensic.frequency.note}</p></div></div></div>
+      <div className="card"><div className="section-head"><div><span className="section-kicker">FORENSIC SIGNALS</span><h2>Metadata + frequency evidence</h2></div></div><div className="method-grid"><div><b>Metadata anomaly</b><p>{result.forensic.metadata.anomaly}% · {result.forensic.metadata.fields.length ? result.forensic.metadata.fields.join(", ") : "No readable metadata fields · absence is neutral"}</p>{result.forensic.metadata.software&&<p className="muted small">Software: {result.forensic.metadata.software}</p>}</div><div><b>Frequency fingerprint</b><p>{result.forensic.frequency.score}% heuristic anomaly</p><p className="muted small">High-frequency energy: {result.forensic.frequency.high_frequency_ratio}%</p></div><div><b>Face / deepfake</b><p>{result.forensic.face.score}% model signal</p><p className="muted small">{result.forensic.face.source}</p></div><div><b>Interpretation</b><p>{result.forensic.frequency.note}</p></div></div></div>
 
       <div className="two">
         <div className="card"><div className="section-head"><div><span className="section-kicker">PROVENANCE</span><h2>Content credentials</h2></div></div>
