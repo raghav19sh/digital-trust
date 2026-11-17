@@ -281,7 +281,7 @@ function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: Fore
   let verdict: MediaAnalysis["verdict"] = "INCONCLUSIVE";
   // The dedicated classifier is the primary signal; local forensic heuristics are supporting evidence.
   // Do not require an unrelated frequency anomaly to agree with the classifier.
-  if (deepfake >= 70 && modelConfidence >= 55) verdict = "AI_MANIPULATED";
+  if (deepfake >= 90 && modelConfidence >= 90) verdict = "AI_MANIPULATED";
   else if (generatorProvenance && ai >= 45) verdict = "AI_GENERATED";
   else if (ai >= 65 && margin >= 15 && modelConfidence >= 55) verdict = "AI_GENERATED";
   else if (modelVerdict === "AI_GENERATED" && ai >= 55 && modelConfidence >= 70) verdict = "AI_GENERATED";
