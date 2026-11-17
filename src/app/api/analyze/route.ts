@@ -328,14 +328,11 @@ async function coverage(text: string, domain: string | null) {
   }
 }
 
-function overall(components: Record<string, Component>, claimScore: number | null) {
-  // Never infer factual credibility from writing style or missing integrations.
+function overall(_components: Record<string, Component>, claimScore: number | null) {
+  // Only claim-level fact-check evidence can produce a factual credibility score.
+  // Domain, coverage and language remain visible diagnostics, not substitutes for verification.
   if (claimScore === null) return null;
-  const support = [components.news_coverage, components.domain_reputation].filter((x) => x.available);
-  const supportWeight = support.reduce((sum,x) => sum + x.weight, 0);
-  const supportScore = supportWeight ? support.reduce((sum,x) => sum + x.score*x.weight, 0)/supportWeight : null;
-  const score = supportScore === null ? claimScore : claimScore*0.7 + supportScore*0.3;
-  return Math.round(clamp(score)*10)/10;
+  return Math.round(clamp(claimScore)*10)/10;
 }
 function evidenceCoverage(components: Record<string, Component>) {
   const configuredWeight = Object.values(components).reduce((sum, item) => sum + item.weight, 0);
