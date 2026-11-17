@@ -277,6 +277,8 @@ async function factChecks(text: string) {
   const score = calculateEvidenceScore(claimResults);
   return { component: { score: score.score ?? 50, weight: weights.fact_check, available: score.assessed > 0, details: { claims_extracted: extracted.length, claims_assessed: score.assessed, claim_coverage: score.coverage, reason: score.assessed ? undefined : 'No relevant fact-checks found; claims remain unverified.' } } as Component, facts: facts.slice(0,12), claimResults, score };
 }
+function claims(text: string) { return extractClaims(text).map((claim) => claim.text); }
+
 async function coverage(text: string, domain: string | null) {
   const key = process.env.NEWS_API_KEY;
   if (!key) {
@@ -335,8 +337,9 @@ function overall(_components: Record<string, Component>, claimScore: number | nu
   return Math.round(clamp(claimScore)*10)/10;
 }
 function evidenceCoverage(components: Record<string, Component>) {
-  const configuredWeight = Object.values(components).reduce((sum, item) => sum + item.weight, 0);
-  const availableWeight = Object.values(components)
+  const factualSignals = [components.fact_check, components.domain_reputation, components.news_coverage];
+  const configuredWeight = factualSignals.reduce((sum, item) => sum + item.weight, 0);
+  const availableWeight = factualSignals
     .filter((item) => item.available)
     .reduce((sum, item) => sum + item.weight, 0);
   return configuredWeight ? Math.round((availableWeight / configuredWeight) * 100) : 0;
