@@ -8,8 +8,7 @@ export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
 const MAX_REMOTE_BYTES = 4_000_000;
-const HIVE_CHAT_ENDPOINT = "https://api.thehive.ai/api/v3/chat/completions";
-const HIVE_VLM_MODEL = "hive/vision-language-model";
+const HIVE_DETECTION_ENDPOINT = "https://api.hivemoderation.com/api/v2/task/sync?legacy=1";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
@@ -44,7 +43,7 @@ type MediaAnalysis = {
   verdict: "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
   explanation: string;
   confidence: number;
-  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number };
+  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: string; model_confidence: number };
   forensic: ForensicSignals;
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
@@ -68,13 +67,6 @@ function getStatusMessage(data: any) {
   return data?.message || data?.error?.message || data?.error || data?.status?.message || data?.status?.[0]?.status?.message || data?.detail;
 }
 
-function parseJsonContent(content: unknown) {
-  if (typeof content !== "string") throw new Error("Hive VLM returned an unexpected response.");
-  const cleaned = content.replace(/^\s*\`\`\`json\s*/i, "").replace(/^\s*\`\`\`\s*/i, "").replace(/\s*\`\`\`\s*$/i, "").trim();
-  const parsed = JSON.parse(cleaned);
-  if (!parsed || typeof parsed !== "object") throw new Error("Hive VLM returned invalid JSON.");
-  return parsed as any;
-}
 
 function ascii(buffer: Buffer, start: number, length: number) {
   return buffer.subarray(start, start + length).toString("latin1");
@@ -306,78 +298,60 @@ function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: Fore
   return { verdict, confidence, explanation };
 }
 async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaInput: string) {
-  const media = mediaType === "video"
-    ? { type: "media_url", media_url: { url: mediaInput, sampling: { strategy: "fps", fps: 1 }, prompt_scope: "per_frame" } }
-    : { type: "image_url", image_url: { url: mediaInput } };
-
-  const schema = {
-    name: "media_authenticity",
-    schema: {
-      type: "object",
-      properties: {
-        verdict: { type: "string", enum: ["AI_GENERATED", "AI_MANIPULATED", "NO_STRONG_AI_SIGNAL", "INCONCLUSIVE"] },
-        explanation: { type: "string" },
-        confidence: { type: "number", minimum: 0, maximum: 100 },
-        ai_generated: { type: "number", minimum: 0, maximum: 100 },
-        not_ai_generated: { type: "number", minimum: 0, maximum: 100 },
-        deepfake: { type: "number", minimum: 0, maximum: 100 },
-        likely_source_name: { type: "string" },
-        likely_source_confidence: { type: "number", minimum: 0, maximum: 100 },
-      },
-      required: ["verdict","explanation","confidence","ai_generated","not_ai_generated","deepfake","likely_source_name","likely_source_confidence"],
-      additionalProperties: false,
-    },
-    strict: true,
-  };
-
-  const upstream = await fetch(HIVE_CHAT_ENDPOINT, {
+  const form = new FormData();
+  form.set("user_id", "digitrust-public");
+  form.set("post_id", crypto.randomUUID());
+  form.set("models", JSON.stringify(["ai_generated_media", "deepfake"]));
+  if (mediaInput.startsWith("data:")) {
+    const match = mediaInput.match(/^data:([^;]+);base64,(.+)$/s);
+    if (!match) throw new Error("Invalid media payload.");
+    const mime = match[1];
+    const bytes = Buffer.from(match[2], "base64");
+    form.set("media", new Blob([bytes], { type: mime }), mediaType === "video" ? "upload-video" : "upload-image");
+  } else {
+    form.set("url", mediaInput);
+  }
+  const upstream = await fetch(HIVE_DETECTION_ENDPOINT, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key.trim()}`, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      model: HIVE_VLM_MODEL,
-      max_tokens: 500,
-      temperature: 0,
-      top_p: 0.1,
-      top_k: 1,
-      response_format: { type: "json_schema", json_schema: schema },
-      messages: [{
-        role: "user",
-        content: [{
-          type: "text",
-          text: `Perform a forensic media authenticity assessment of this ${mediaType}. Use visual evidence only. Do not call something AI-generated merely because it looks polished, cinematic, smooth, unusual or synthetic-looking. Look for generation artifacts, inconsistent textures, local detail failures, face/identity inconsistencies, lighting/shadow contradictions and temporal inconsistencies. Return conservative probabilities and do not invent provenance or a generator.`,
-        }, media],
-      }],
-    }),
-    signal: AbortSignal.timeout(45_000),
+    headers: { Authorization: "token " + key.trim(), Accept: "application/json" },
+    body: form,
+    signal: AbortSignal.timeout(55_000),
   });
-
-  const text = await upstream.text();
-  let data: any = null;
-  try { data = JSON.parse(text); } catch {}
-  if (!upstream.ok) throw new Error(`Hive VLM HTTP ${upstream.status}: ${String(getStatusMessage(data) || text || "Unknown error").slice(0, 500)}`);
-
-  const choices = Array.isArray(data?.choices) ? data.choices : [];
-  const raws = choices.map((choice: any) => parseJsonContent(choice?.message?.content)).filter((value: any) => value && typeof value === "object");
-  if (!raws.length) throw new Error("Hive VLM returned no structured media analysis.");
-
-  const mean = (key: string) => raws.reduce((sum: number, item: any) => sum + clamp(Number(item[key]) || 0), 0) / raws.length;
-  const ai = mean("ai_generated");
-  const notAi = mean("not_ai_generated");
-  const deepfake = mean("deepfake");
-  const confidence = mean("confidence");
-  const bestSource = raws.map((r: any) => ({ name: String(r.likely_source_name || "").trim(), confidence: clamp(Number(r.likely_source_confidence) || 0) })).filter((s: any) => s.name && s.confidence > 0).sort((a: any,b: any)=>b.confidence-a.confidence)[0] || null;
-
-  return {
-    ai, notAi, deepfake, confidence, bestSource,
-    modelVerdict: (["AI_GENERATED","AI_MANIPULATED","NO_STRONG_AI_SIGNAL","INCONCLUSIVE"].includes(String(raws[0]?.verdict)) ? raws[0].verdict : "INCONCLUSIVE"),
-    frames: mediaType === "video" ? raws.length : 1,
-    explanation: String(raws[0]?.explanation || ""),
+  const rawText = await upstream.text();
+  let data: any;
+  try { data = JSON.parse(rawText); } catch { throw new Error("Hive detection returned an invalid response."); }
+  if (!upstream.ok || data?.error) throw new Error("Hive detection HTTP " + upstream.status + ": " + String(data?.message || data?.error || rawText).slice(0, 400));
+  const classGroups: any[][] = [];
+  const visit = (value: any) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value.classes)) classGroups.push(value.classes);
+    if (Array.isArray(value)) value.forEach(visit);
+    else Object.values(value).forEach(visit);
   };
+  visit(data);
+  if (!classGroups.length) throw new Error("Hive did not return AI-generation classification scores. Check that the API key has the AI-generated media model enabled.");
+  const scoreFor = (classes: any[], name: string) => {
+    const found = classes.find((item: any) => String(item.class).toLowerCase() === name);
+    return found ? clamp(Number(found.score) * 100) : 0;
+  };
+  const aiScores = classGroups.map(group => scoreFor(group, "ai_generated"));
+  const notAiScores = classGroups.map(group => scoreFor(group, "not_ai_generated"));
+  const deepfakeScores = classGroups.map(group => scoreFor(group, "deepfake"));
+  const ai = mediaType === "video" ? Math.max(...aiScores) : aiScores.reduce((x,y)=>x+y,0)/aiScores.length;
+  const notAi = notAiScores.reduce((x,y)=>x+y,0)/notAiScores.length;
+  const deepfake = Math.max(...deepfakeScores);
+  const bestSource = classGroups.flatMap(group => group)
+    .filter((item: any) => !["ai_generated","not_ai_generated","deepfake","none","inconclusive","inconclusive_video"].includes(String(item.class).toLowerCase()))
+    .map((item: any) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
+    .sort((x: any,y: any)=>y.confidence-x.confidence)[0] || null;
+  const tags = data?.status?.flatMap((item: any) => item?.response?.output || [])?.map((item: any) => item?.algorithmic_tags?.c2pa).find(Boolean) || null;
+  const modelVerdict = ai >= 90 ? "AI_GENERATED" : deepfake >= 90 ? "AI_MANIPULATED" : notAi >= 90 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
+  const confidence = Math.max(ai, notAi, deepfake);
+  return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa: tags };
 }
-
 export async function POST(request: Request) {
-  const key = process.env.HIVE_API_KEY?.trim();
-  if (!key) return response({ error: "Media detector is not configured. Add HIVE_API_KEY to the deployment environment." }, 503);
+  const key = (process.env.HIVE_DETECTION_API_KEY || process.env.HIVE_API_KEY)?.trim();
+  if (!key) return response({ error: "Media detector is not configured. Add HIVE_DETECTION_API_KEY (Hive Moderation API key with the ai_generated_media and deepfake models enabled) to the deployment environment." }, 503);
 
   try {
     const form = await request.formData();
@@ -434,13 +408,13 @@ export async function POST(request: Request) {
       forensic,
       likely_source: analysis.bestSource,
       provenance: {
-        detected: forensic.metadata.c2pa,
-        generator: null,
-        software_agent: forensic.metadata.software,
-        action: null,
-        digital_source_type: null,
+        detected: Boolean(analysis.c2pa) || forensic.metadata.c2pa,
+        generator: analysis.c2pa?.claim_generator || null,
+        software_agent: analysis.c2pa?.actions_software_agent || forensic.metadata.software,
+        action: analysis.c2pa?.actions_action || null,
+        digital_source_type: analysis.c2pa?.actions_digital_source_type || null,
       },
-      detector: "Hive V3 VLM + metadata + DCT frequency forensics",
+      detector: "Hive AI-generated media classifier + deepfake model + metadata + DCT frequency forensics",
     } satisfies MediaAnalysis);
   } catch (error) {
     console.error("Media analysis route failed.", error);
