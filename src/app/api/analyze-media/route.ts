@@ -43,7 +43,7 @@ type MediaAnalysis = {
   verdict: "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
   explanation: string;
   confidence: number;
-  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: string; model_confidence: number };
+  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: MediaAnalysis["verdict"]; model_confidence: number };
   forensic: ForensicSignals;
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
