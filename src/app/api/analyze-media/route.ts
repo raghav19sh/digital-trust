@@ -341,7 +341,7 @@ async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaIn
   const notAi = notAiScores.reduce((x,y)=>x+y,0)/notAiScores.length;
   const deepfake = Math.max(...deepfakeScores);
   const bestSource = classGroups.flatMap(group => group)
-    .filter((item: any) => !["ai_generated","not_ai_generated","deepfake","none","inconclusive","inconclusive_video"].includes(String(item.class).toLowerCase()))
+    .filter((item: any) => !["ai_generated","not_ai_generated","deepfake","none","inconclusive","inconclusive_video"].includes(String(item.class).toLowerCase()) && Number(item.score) >= 0.1)
     .map((item: any) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
     .sort((x: any,y: any)=>y.confidence-x.confidence)[0] || null;
   const tags = data?.status?.flatMap((item: any) => item?.response?.output || [])?.map((item: any) => item?.algorithmic_tags?.c2pa).find(Boolean) || null;
@@ -350,7 +350,7 @@ async function runVlmAnalysis(key: string, mediaType: "image" | "video", mediaIn
   return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa: tags };
 }
 export async function POST(request: Request) {
-  const key = (process.env.HIVE_DETECTION_API_KEY || process.env.HIVE_API_KEY)?.trim();
+  const key = process.env.HIVE_DETECTION_API_KEY?.trim();
   if (!key) return response({ error: "Media detector is not configured. Add HIVE_DETECTION_API_KEY (Hive Moderation API key with the ai_generated_media and deepfake models enabled) to the deployment environment." }, 503);
 
   try {
@@ -390,7 +390,7 @@ export async function POST(request: Request) {
     }
 
     const analysis = await runVlmAnalysis(key, mediaType, mediaInput);
-    if (file instanceof File) forensic.face = { available: analysis.deepfake > 0, score: analysis.deepfake, source: "Hive V3 deepfake signal; not a separate face model" };
+    forensic.face = { available: true, score: analysis.deepfake, source: "Hive dedicated deepfake classifier" };
 
     const fused = fuseVerdict(analysis.ai, analysis.notAi, analysis.deepfake, forensic, analysis.modelVerdict, analysis.confidence);
     return response({
