@@ -279,8 +279,8 @@ function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: Fore
   const generatorProvenance = forensic.metadata.anomaly >= 80;
   const margin = ai - notAi;
   let verdict: MediaAnalysis["verdict"] = "INCONCLUSIVE";
-  // The current provider is one VLM, not a multi-model consensus.
-  // Do not require an unrelated frequency anomaly to agree with the model.
+  // The dedicated classifier is the primary signal; local forensic heuristics are supporting evidence.
+  // Do not require an unrelated frequency anomaly to agree with the classifier.
   if (deepfake >= 70 && modelConfidence >= 55) verdict = "AI_MANIPULATED";
   else if (generatorProvenance && ai >= 45) verdict = "AI_GENERATED";
   else if (ai >= 65 && margin >= 15 && modelConfidence >= 55) verdict = "AI_GENERATED";
