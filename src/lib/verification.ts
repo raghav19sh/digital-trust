@@ -43,7 +43,7 @@ export function extractClaims(input: string, limit = 8): ExtractedClaim[] {
 
 export function classifyRating(rating: string): {status: ClaimStatus; score: number | null} {
   const value = rating.toLowerCase();
-  if (/mostly false|mostly true|half true|mixture|mixed|partly false|partially true|partly true|half-true/.test(value)) return {status:"partially_supported",score:50};
+  if (/not true|not proven|unproven|no evidence|insufficient|mostly false|mostly true|half true|mixture|mixed|partly false|partially true|partly true|half-true/.test(value)) return {status:"partially_supported",score:50};
   if (/false|incorrect|fake|pants on fire|lie|fabricated|misleading/.test(value)) return {status:"refuted",score:0};
   if (/true|correct|accurate|verified/.test(value)) return {status:"supported",score:100};
   return {status:"unverified",score:null};
