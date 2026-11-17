@@ -1,7 +1,8 @@
+import Link from "next/link";
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import { AlertTriangle, CheckCircle2, FileImage, Film, ShieldCheck, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Film, ShieldCheck, UploadCloud } from "lucide-react";
 
 type Verdict = "AI_GENERATED" | "AI_MANIPULATED" | "NO_STRONG_AI_SIGNAL" | "INCONCLUSIVE";
 type Result = {
@@ -56,8 +57,8 @@ export default function MediaPage() {
 
   return <main className="container page">
     <nav className="nav">
-      <a className="brand" href="/"><span className="mark"><ShieldCheck size={18}/></span>DigiTrust</a>
-      <a className="muted" href="/">← Analyzer</a>
+      <Link className="brand" href="/"><span className="mark"><ShieldCheck size={18}/></span>DigiTrust</Link>
+      <Link className="muted" href="/">← Analyzer</Link>
     </nav>
 
     <section className="hero" style={{paddingTop: 30}}>
