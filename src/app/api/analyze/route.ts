@@ -272,7 +272,9 @@ async function factChecks(text: string) {
       }
     } catch {}
     evidence.sort((x,y) => y.relevance - x.relevance); const best = evidence[0];
-    claimResults.push({ ...claim, status: best?.status ?? 'unverified', score: best ? (best.status === 'supported' ? 100 : best.status === 'refuted' ? 0 : 50) : null, evidence: evidence.slice(0,3) });
+    const statuses = new Set(evidence.map((item) => item.status));
+    const status = statuses.size > 1 ? 'partially_supported' : (best?.status ?? 'unverified');
+    claimResults.push({ ...claim, status, score: status === 'supported' ? 100 : status === 'refuted' ? 0 : status === 'partially_supported' ? 50 : null, evidence: evidence.slice(0,3) });
   }
   const score = calculateEvidenceScore(claimResults);
   return { component: { score: score.score ?? 50, weight: weights.fact_check, available: score.assessed > 0, details: { claims_extracted: extracted.length, claims_assessed: score.assessed, claim_coverage: score.coverage, reason: score.assessed ? undefined : 'No relevant fact-checks found; claims remain unverified.' } } as Component, facts: facts.slice(0,12), claimResults, score };
@@ -429,7 +431,6 @@ export async function POST(request: Request) {
       components,
       red_flags: languageResult.flags,
       verified_facts: fact.facts,
-      claim_results: fact.claimResults,
       language_diagnostics: { score: languageResult.score, red_flags: languageResult.flags },
       sources: news.sources,
     });
