@@ -1,5 +1,6 @@
-import Link from "next/link";
 "use client";
+
+import Link from "next/link";
 
 import { useState, type ChangeEvent } from "react";
 import { AlertTriangle, CheckCircle2, Film, ShieldCheck, UploadCloud } from "lucide-react";
@@ -9,7 +10,7 @@ type Result = {
   verdict: Verdict;
   explanation: string;
   confidence: number;
-  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: string; model_confidence: number };
+  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: string; model_confidence: number; source_confidence: number; non_ai_source: number };
   forensic: { metadata: { available: boolean; score: number; anomaly: number; fields: string[]; software: string | null; camera: string | null; c2pa: boolean }; frequency: { available: boolean; score: number; low_energy: number; mid_energy: number; high_energy: number; high_frequency_ratio: number; note: string }; face: { available: boolean; score: number; source: string } };
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
@@ -72,7 +73,7 @@ export default function MediaPage() {
         <UploadCloud size={28}/>
         <strong>{file ? file.name : "Choose an image or video"}</strong>
         <span>JPG · PNG · WEBP · GIF · MP4 · WEBM · M4V · MOV · AVI · MKV · WMV</span>
-        <small>Direct upload: 4 MB maximum. Larger videos can be checked by public URL.</small>
+        <small>Direct upload: 4 MB maximum. Public direct-download video URLs up to 20 MB are supported.</small>
         <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/x-m4v,video/quicktime,video/x-msvideo,video/x-matroska,video/x-ms-wmv" onChange={pick}/>
       </label>
       <div className="or">OR</div>
@@ -87,7 +88,7 @@ export default function MediaPage() {
         <div><span className="section-kicker">PRIMARY CLASSIFICATION</span><h2>{verdict!.title}</h2><p>{result.explanation}</p><strong>{result.confidence}% confidence signal</strong></div>
       </div>
 
-      <div className="card"><span className="section-kicker">DETECTOR CLASSIFICATION</span><h2>{result.signals.model_verdict.replaceAll("_", " ")}</h2><p className="muted small">Dedicated Hive AI-generated media classifier · {result.signals.model_confidence}% top-class confidence. DigiTrust uses Hive’s recommended 90% starting threshold for a high-confidence direct classification; intermediate scores are interpreted with other evidence.</p></div>
+      <div className="card"><span className="section-kicker">DETECTOR CLASSIFICATION</span><h2>{result.signals.model_verdict.replaceAll("_", " ")}</h2><p className="muted small">Sightengine AI score: {result.signals.ai_generated}% · top generator score: {result.signals.source_confidence}% likely generator · {result.signals.non_ai_source}% inverse AI score (not a separate detector). A low AI score is not proof of authenticity.</p></div>
       <div className="metric-grid">
         <div><span className="muted small">AI generation</span><b>{result.signals.ai_generated}%</b></div>
         <div><span className="muted small">AI manipulation / deepfake</span><b>{result.signals.deepfake}%</b></div>

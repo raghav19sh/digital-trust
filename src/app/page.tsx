@@ -10,7 +10,7 @@ type Flag={category:string;excerpt:string;explanation:string;penalty:number};
 type MediaVerdict="AI_GENERATED"|"AI_MANIPULATED"|"NO_STRONG_AI_SIGNAL"|"INCONCLUSIVE";
 type MediaResult={
  verdict:MediaVerdict; explanation:string; confidence:number;
- signals:{ai_generated:number;not_ai_generated:number;deepfake:number;frames_analyzed:number};
+ signals:{ai_generated:number;not_ai_generated:number;deepfake:number;frames_analyzed:number;source_confidence:number;non_ai_source:number};
  forensic:{metadata:{available:boolean;score:number;anomaly:number;fields:string[];software:string|null;camera:string|null;c2pa:boolean};frequency:{available:boolean;score:number;low_energy:number;mid_energy:number;high_energy:number;high_frequency_ratio:number;note:string};face:{available:boolean;score:number;source:string}};
  likely_source:{name:string;confidence:number}|null;
  provenance:{detected:boolean;generator:string|null;software_agent:string|null;action:string|null;digital_source_type:string|null};
@@ -49,7 +49,7 @@ export default function Home(){
  async function analyzeMedia(){
   if(!mediaFile&&!mediaUrl.trim())return setMediaError("Choose an image/video or enter a public media URL.");
   setMediaError("");setMediaResult(null);setMediaLoading(true);
-  try{const form=new FormData();if(mediaFile)form.append("file",mediaFile);else form.append("url",mediaUrl.trim());const r=await fetch("/api/analyze-media",{method:"POST",body:form});const d=await r.json();if(!r.ok)throw new Error(d.error||"Media analysis failed.");setMediaResult(d as MediaResult)}
+  try{const form=new FormData();if(mediaFile)form.append("file",mediaFile);else form.append("url",mediaUrl.trim());const r=await fetch("/api/analyze-media",{method:"POST",body:form});const d=await r.json();if(!r.ok)throw new Error([d.error,d.detail].filter(Boolean).join(": ")||"Media analysis failed.");setMediaResult(d as MediaResult)}
   catch(e){setMediaError(e instanceof Error?e.message:"Media analysis failed.")}finally{setMediaLoading(false)}
  }
  function key(e:KeyboardEvent<HTMLInputElement>){if(e.key==="Enter")void analyze()}
@@ -64,9 +64,9 @@ export default function Home(){
    <div className="notice"><Info size={13}/> A trust score is a <strong>signal, not a verdict</strong>. Every available input, deduction and unavailable dependency is exposed below.</div>
    {error&&<div className="error"><AlertTriangle size={14}/>{error}</div>}
   </section>
-  <section className="media-home">
+  <section className="media-home" id="media-lab">
    <div className="media-home-head">
-    <div><span className="eyebrow"><Film size={13}/> Media Authenticity Intelligence</span><h2>Check photos and videos for AI signals.</h2><p>Upload media or paste a public URL. DigiTrust checks synthetic-generation, manipulation/deepfake signals and available provenance without pretending that detection is absolute.</p></div>
+    <div><span className="eyebrow"><Film size={13}/> Media Authenticity Intelligence · IMAGE & VIDEO LAB</span><h2>Check photos and videos for AI signals.</h2><p>Upload media or paste a public URL. DigiTrust checks synthetic-generation, manipulation/deepfake signals and available provenance without pretending that detection is absolute.</p></div>
     <Link className="text-link" href="/media">Open full media lab <ArrowRight size={14}/></Link>
    </div>
    <div className="media-home-grid">
@@ -88,7 +88,7 @@ export default function Home(){
    {mediaResult&&<div className={"media-home-result "+(mediaResult.verdict==="AI_GENERATED"?"bad":mediaResult.verdict==="NO_STRONG_AI_SIGNAL"?"good":"warn")}>
     <div><span className="section-kicker">MEDIA RESULT</span><h3>{mediaTitle}</h3><p>{mediaResult.explanation}</p></div>
     <div className="media-home-metrics"><div><span>AI generation</span><b>{mediaResult.signals.ai_generated}%</b></div><div><span>Manipulation</span><b>{mediaResult.signals.deepfake}%</b></div><div><span>Non-AI signal</span><b>{mediaResult.signals.not_ai_generated}%</b></div><div><span>Frames</span><b>{mediaResult.signals.frames_analyzed}</b></div></div>
-    <div className="media-home-foot">{mediaResult.provenance.detected?"C2PA provenance signal detected":"No C2PA provenance signal"} · {mediaResult.likely_source?("Likely source: "+mediaResult.likely_source.name):"No specific generator identified"} · {mediaResult.confidence}% fused signal</div><div className="media-home-foot">Forensics: metadata {mediaResult.forensic.metadata.anomaly}% anomaly · frequency {mediaResult.forensic.frequency.score}% heuristic · face/deepfake {mediaResult.forensic.face.score}% · {mediaResult.forensic.frequency.note}</div>
+    <div className="media-home-foot">{mediaResult.provenance.detected?"C2PA provenance signal detected":"No C2PA provenance signal"} · {mediaResult.likely_source?("Likely source: "+mediaResult.likely_source.name):"No specific generator identified"} · {mediaResult.confidence}% detector signal · top generator score {mediaResult.signals.source_confidence}% · inverse AI score {mediaResult.signals.non_ai_source}%</div><div className="media-home-foot">Forensics: metadata {mediaResult.forensic.metadata.anomaly}% anomaly · frequency {mediaResult.forensic.frequency.score}% heuristic · face/deepfake {mediaResult.forensic.face.score}% · {mediaResult.forensic.frequency.note}</div>
    </div>}
   </section>
   {!result&&<div className="grid">{[["01 · Extract","Identify readable content and candidate claims."],["02 · Verify","Search published fact-check evidence."],["03 · Corroborate","Search independent reporting."],["04 · Explain","Expose every weighted contribution."]].map(x=><div className="stat" key={x[0]}><strong>{x[0]}</strong><span>{x[1]}</span></div>)}</div>}

@@ -8,7 +8,9 @@ export const maxDuration = 60;
 
 const MAX_UPLOAD_BYTES = 4_000_000;
 const MAX_REMOTE_BYTES = 4_000_000;
-const HIVE_DETECTION_ENDPOINT = "https://api.hivemoderation.com/api/v2/task/sync?legacy=1";
+const SIGHTENGINE_IMAGE_ENDPOINT = "https://api.sightengine.com/1.0/check.json";
+const SIGHTENGINE_VIDEO_ENDPOINT = "https://api.sightengine.com/1.0/video/check-sync.json";
+const MAX_REMOTE_VIDEO_BYTES = 20_000_000;
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime", "video/x-m4v", "video/x-msvideo", "video/x-matroska", "video/x-ms-wmv"]);
@@ -45,7 +47,7 @@ type MediaAnalysis = {
   verdict: MediaVerdict;
   explanation: string;
   confidence: number;
-  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: MediaVerdict; model_confidence: number };
+  signals: { ai_generated: number; not_ai_generated: number; deepfake: number; frames_analyzed: number; model_verdict: MediaVerdict; model_confidence: number; source_confidence: number; non_ai_source: number };
   forensic: ForensicSignals;
   likely_source: { name: string; confidence: number } | null;
   provenance: { detected: boolean; generator: string | null; software_agent: string | null; action: string | null; digital_source_type: string | null };
@@ -213,7 +215,7 @@ function combineForensics(metadata: ForensicSignals["metadata"], frequency: Fore
     face: {
       available: deepfake > 0,
       score: deepfake,
-      source: "Hive V3 deepfake signal; not a separate face model",
+      source: "Sightengine dedicated deepfake classifier",
     },
   };
 }
@@ -235,160 +237,163 @@ function isPublicAddress(address: string) {
   return (/^[23]/.test(value) && !value.startsWith('2001:db8:'));
 }
 
-async function fetchRemoteImage(input: string) {
+async function fetchRemoteMedia(input: string, allowedTypes: Set<string>, maxBytes: number) {
   let current = input;
   for (let hop = 0; hop <= 3; hop++) {
     const url = new URL(current);
-    if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only public HTTP/HTTPS media URLs are supported.');
-    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("Only public HTTP/HTTPS media URLs are supported.");
+    const host = url.hostname.replace(/^\[|\]$/g, "");
     const addresses = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true, verbatim: true });
-    if (!addresses.length || addresses.some(item => !isPublicAddress(item.address))) throw new Error('Media URL resolves to a private or non-public address.');
+    if (!addresses.length || addresses.some(item => !isPublicAddress(item.address))) throw new Error("Media URL resolves to a private or non-public address.");
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    let response: Response;
-    try { response = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': 'DigiTrust/2.0', accept: 'image/jpeg,image/png,image/webp,image/gif' } }); }
-    finally { clearTimeout(timeout); }
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      await response.body?.cancel();
-      if (!location) throw new Error('Media URL returned an invalid redirect.');
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    let upstream: Response;
+    try {
+      upstream = await fetch(url, { redirect: "manual", signal: controller.signal, headers: { "user-agent": "DigiTrust/2.0", accept: [...allowedTypes].join(",") } });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (upstream.status >= 300 && upstream.status < 400) {
+      const location = upstream.headers.get("location");
+      await upstream.body?.cancel();
+      if (!location) throw new Error("Media URL returned an invalid redirect.");
       current = new URL(location, url).toString();
       continue;
     }
-    if (!response.ok) throw new Error('Could not retrieve the remote image (HTTP ' + response.status + ').');
-    const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!['image/jpeg','image/png','image/webp','image/gif'].includes(mime)) throw new Error('The URL did not return a supported image.');
-    const declared = Number(response.headers.get('content-length') || 0);
-    if (declared > MAX_REMOTE_BYTES) { await response.body?.cancel(); throw new Error('Remote image exceeds the 4 MB analysis limit.'); }
-    if (!response.body) throw new Error('Remote image response was empty.');
-    const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
-    try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.byteLength; if (size > MAX_REMOTE_BYTES) { await reader.cancel(); throw new Error('Remote image exceeds the 4 MB analysis limit.'); } chunks.push(part.value); } }
-    finally { reader.releaseLock(); }
+    if (!upstream.ok) throw new Error("Could not retrieve remote media (HTTP " + upstream.status + ").");
+    const mime = (upstream.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    if (!allowedTypes.has(mime)) throw new Error("The URL did not return a supported media type.");
+    const declared = Number(upstream.headers.get("content-length") || 0);
+    if (declared > maxBytes) {
+      await upstream.body?.cancel();
+      throw new Error("Remote media exceeds the " + Math.round(maxBytes / 1_000_000) + " MB analysis limit.");
+    }
+    if (!upstream.body) throw new Error("Remote media response was empty.");
+    const reader = upstream.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > maxBytes) {
+          await reader.cancel();
+          throw new Error("Remote media exceeds the " + Math.round(maxBytes / 1_000_000) + " MB analysis limit.");
+        }
+        chunks.push(part.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
     return { buffer: Buffer.concat(chunks.map(chunk => Buffer.from(chunk))), mime, url: current };
   }
-  throw new Error('Too many redirects while retrieving remote media.');
+  throw new Error("Too many redirects while retrieving remote media.");
 }
-function fuseVerdict(ai: number, notAi: number, deepfake: number, forensic: ForensicSignals, modelVerdict: MediaAnalysis["verdict"], modelConfidence: number): Pick<MediaAnalysis, "verdict" | "confidence" | "explanation"> {
-  const generatorProvenance = forensic.metadata.anomaly >= 80;
-  const margin = ai - notAi;
-  let verdict: MediaAnalysis["verdict"] = "INCONCLUSIVE";
-  // The dedicated classifier is the primary signal; local forensic heuristics are supporting evidence.
-  // Do not require an unrelated frequency anomaly to agree with the classifier.
-  if (deepfake >= 90 && modelConfidence >= 90) verdict = "AI_MANIPULATED";
-  else if (generatorProvenance && ai >= 45) verdict = "AI_GENERATED";
-  else if (ai >= 65 && margin >= 15 && modelConfidence >= 55) verdict = "AI_GENERATED";
-  else if (modelVerdict === "AI_GENERATED" && ai >= 55 && modelConfidence >= 70) verdict = "AI_GENERATED";
-  else if (notAi >= 65 && ai < 45 && deepfake < 40 && modelConfidence >= 50) verdict = "NO_STRONG_AI_SIGNAL";
-  else if (modelVerdict === "NO_STRONG_AI_SIGNAL" && notAi >= 55 && ai < 50 && modelConfidence >= 65) verdict = "NO_STRONG_AI_SIGNAL";
-  const confidence = clamp(Math.round(modelConfidence));
+function fuseVerdict(ai: number, deepfake: number): Pick<MediaAnalysis, "verdict" | "confidence" | "explanation"> {
+  let verdict: MediaVerdict = "INCONCLUSIVE";
+  if (deepfake >= 70) verdict = "AI_MANIPULATED";
+  else if (ai >= 70) verdict = "AI_GENERATED";
+  else if (ai <= 30 && deepfake < 50) verdict = "NO_STRONG_AI_SIGNAL";
+  const confidence = verdict === "AI_GENERATED" ? ai
+    : verdict === "AI_MANIPULATED" ? deepfake
+    : verdict === "NO_STRONG_AI_SIGNAL" ? 100 - ai
+    : Math.max(ai, deepfake);
   const explanation = verdict === "AI_GENERATED"
-    ? "The visual model returned a strong synthetic-generation signal. Metadata and frequency checks are supporting evidence only and are not treated as independent classifiers."
+    ? "Sightengine's pixel-based detector returned a strong AI-generation signal. Generator scores are supporting attribution, not proof of a specific tool."
     : verdict === "AI_MANIPULATED"
-      ? "The visual model returned a strong face-manipulation/deepfake signal."
+      ? "Sightengine returned a strong face-manipulation/deepfake signal. This is distinct from fully AI-generated imagery."
       : verdict === "NO_STRONG_AI_SIGNAL"
-        ? "The visual model found stronger non-AI than AI signals. This is not proof that the image is authentic."
-        : "The model signals are not decisive enough for a responsible classification. More than one independent detector or provenance evidence is needed.";
-  return { verdict, confidence, explanation };
+        ? "Sightengine returned a low AI-generation score and no strong deepfake signal. This is not proof that the media is authentic."
+        : "Sightengine's scores fall in an uncertain range. The available evidence is not decisive enough for a responsible classification.";
+  return { verdict, confidence: clamp(Math.round(confidence)), explanation };
 }
-type HiveClass = { class?: unknown; score?: unknown };
-type HiveRecord = Record<string, unknown>;
+type SightengineRecord = Record<string, unknown>;
+type SightengineFrame = { ai: number; deepfake: number; generators: Record<string, number> };
 
-function isRecord(value: unknown): value is HiveRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function asRecord(value: unknown): SightengineRecord | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as SightengineRecord : null;
 }
-
-function collectHiveClasses(value: unknown, groups: HiveClass[][]): void {
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectHiveClasses(entry, groups));
-    return;
-  }
-  if (!isRecord(value)) return;
-  if (Array.isArray(value.classes)) {
-    groups.push(value.classes.filter(isRecord) as HiveClass[]);
-  }
-  Object.values(value).forEach((entry) => collectHiveClasses(entry, groups));
+function scorePercent(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return clamp(value * 100);
 }
-
-function collectC2pa(value: unknown): HiveRecord | null {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = collectC2pa(entry);
-      if (found) return found;
+function parseSightengineFrame(value: unknown): SightengineFrame | null {
+  const root = asRecord(value);
+  const type = asRecord(root?.type);
+  if (!type) return null;
+  const ai = scorePercent(type.ai_generated);
+  if (ai === null) return null;
+  const deepfake = scorePercent(type.deepfake) ?? 0;
+  const rawGenerators = asRecord(type.ai_generators);
+  const generators: Record<string, number> = {};
+  if (rawGenerators) {
+    for (const [name, rawScore] of Object.entries(rawGenerators)) {
+      const score = scorePercent(rawScore);
+      if (score !== null) generators[name] = score;
     }
-    return null;
   }
-  if (!isRecord(value)) return null;
-  if (isRecord(value.algorithmic_tags) && isRecord(value.algorithmic_tags.c2pa)) {
-    return value.algorithmic_tags.c2pa;
-  }
-  for (const entry of Object.values(value)) {
-    const found = collectC2pa(entry);
-    if (found) return found;
-  }
-  return null;
+  return { ai, deepfake, generators };
 }
-
-async function runHiveDetection(key: string, mediaType: "image" | "video", mediaInput: string) {
+async function runSightengineDetection(apiUser: string, apiSecret: string, mediaType: "image" | "video", bytes: Buffer, mime: string) {
   const form = new FormData();
-  form.set("user_id", "digitrust-public");
-  form.set("post_id", crypto.randomUUID());
-  form.append("models", "ai_generated_media");
-  form.append("models", "deepfake");
-  if (mediaInput.startsWith("data:")) {
-    const match = mediaInput.match(/^data:([^;]+);base64,(.+)$/s);
-    if (!match) throw new Error("Invalid media payload.");
-    const mime = match[1];
-    const bytes = Buffer.from(match[2], "base64");
-    form.set("media", new Blob([bytes], { type: mime }), mediaType === "video" ? "upload-video" : "upload-image");
-  } else {
-    form.set("url", mediaInput);
-  }
-  const upstream = await fetch(HIVE_DETECTION_ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: "token " + key.trim(), Accept: "application/json" },
-    body: form,
-    signal: AbortSignal.timeout(55_000),
-  });
+  form.set("media", new Blob([bytes], { type: mime }), mediaType === "video" ? "digitrust-video" : "digitrust-image");
+  form.set("models", "genai,deepfake");
+  form.set("api_user", apiUser);
+  form.set("api_secret", apiSecret);
+  if (mediaType === "video") form.set("interval", "2");
+  const endpoint = mediaType === "video" ? SIGHTENGINE_VIDEO_ENDPOINT : SIGHTENGINE_IMAGE_ENDPOINT;
+  const upstream = await fetch(endpoint, { method: "POST", body: form, signal: AbortSignal.timeout(55_000) });
   const rawText = await upstream.text();
-  let data: unknown;
-  try {
-    data = JSON.parse(rawText);
-  } catch {
-    throw new Error("Hive detection returned an invalid response.");
+  let payload: unknown;
+  try { payload = JSON.parse(rawText); }
+  catch { throw new Error("Sightengine returned a non-JSON response (HTTP " + upstream.status + ")."); }
+  const root = asRecord(payload);
+  const apiError = asRecord(root?.error);
+  if (!upstream.ok || root?.status !== "success") {
+    const message = typeof apiError?.message === "string" ? apiError.message
+      : typeof root?.message === "string" ? root.message : rawText.slice(0, 400);
+    throw new Error("Sightengine API HTTP " + upstream.status + ": " + message);
   }
-  if (!upstream.ok) {
-    const message = isRecord(data) && typeof data.message === "string" ? data.message : rawText;
-    throw new Error("Hive detection HTTP " + upstream.status + ": " + message.slice(0, 400));
+  let frames: SightengineFrame[];
+  if (mediaType === "video") {
+    const data = asRecord(root?.data);
+    const rawFrames = Array.isArray(data?.frames) ? data.frames : [];
+    frames = rawFrames.map(parseSightengineFrame).filter((frame): frame is SightengineFrame => frame !== null);
+  } else {
+    const frame = parseSightengineFrame(payload);
+    frames = frame ? [frame] : [];
   }
-
-  const classGroups: HiveClass[][] = [];
-  collectHiveClasses(data, classGroups);
-  if (!classGroups.length) {
-    throw new Error("Hive did not return AI-generation classification scores. Check that the API key has the ai_generated_media and deepfake models enabled.");
+  if (!frames.length) throw new Error("Sightengine returned no genai scores. Confirm AI-generated media detection is enabled for this API account.");
+  const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+  const ai = average(frames.map(frame => frame.ai));
+  const deepfake = Math.max(...frames.map(frame => frame.deepfake));
+  const generatorTotals = new Map<string, number[]>();
+  for (const frame of frames) {
+    for (const [name, score] of Object.entries(frame.generators)) {
+      const values = generatorTotals.get(name) ?? [];
+      values.push(score);
+      generatorTotals.set(name, values);
+    }
   }
-
-  const scoreFor = (classes: HiveClass[], name: string) => {
-    const found = classes.find((item) => typeof item.class === "string" && item.class.toLowerCase() === name);
-    return found ? clamp(Number(found.score) * 100) : 0;
-  };
-  const aiScores = classGroups.map((group) => scoreFor(group, "ai_generated"));
-  const notAiScores = classGroups.map((group) => scoreFor(group, "not_ai_generated"));
-  const deepfakeScores = classGroups.map((group) => scoreFor(group, "deepfake"));
-  const ai = mediaType === "video" ? Math.max(...aiScores) : aiScores.reduce((x, y) => x + y, 0) / aiScores.length;
-  const notAi = notAiScores.reduce((x, y) => x + y, 0) / notAiScores.length;
-  const deepfake = Math.max(...deepfakeScores);
-  const bestSource = classGroups.flatMap((group) => group)
-    .filter((item) => typeof item.class === "string" && !["ai_generated", "not_ai_generated", "deepfake", "none", "inconclusive", "inconclusive_video"].includes(item.class.toLowerCase()) && Number(item.score) >= 0.1)
-    .map((item) => ({ name: String(item.class), confidence: clamp(Number(item.score) * 100) }))
-    .sort((x, y) => y.confidence - x.confidence)[0] || null;
-  const c2pa = collectC2pa(data);
-  const modelVerdict: MediaVerdict = ai >= 90 ? "AI_GENERATED" : deepfake >= 90 ? "AI_MANIPULATED" : notAi >= 90 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
-  const confidence = Math.max(ai, notAi, deepfake);
-  return { ai, notAi, deepfake, confidence, bestSource, modelVerdict, frames: classGroups.length, explanation: "", c2pa };
+  const generatorScores = [...generatorTotals.entries()]
+    .map(([name, values]) => ({ name, confidence: average(values) }))
+    .sort((a, b) => b.confidence - a.confidence);
+  const bestSource = generatorScores[0] && generatorScores[0].confidence >= 20 ? generatorScores[0] : null;
+  const sourceConfidence = bestSource?.confidence ?? 0;
+  const notAi = 100 - ai;
+  const modelVerdict: MediaVerdict = deepfake >= 70 ? "AI_MANIPULATED"
+    : ai >= 70 ? "AI_GENERATED"
+    : ai <= 30 && deepfake < 50 ? "NO_STRONG_AI_SIGNAL" : "INCONCLUSIVE";
+  const confidence = modelVerdict === "AI_GENERATED" ? ai
+    : modelVerdict === "AI_MANIPULATED" ? deepfake
+    : modelVerdict === "NO_STRONG_AI_SIGNAL" ? notAi : Math.max(ai, deepfake);
+  return { ai, notAi, deepfake, sourceConfidence, nonAiSource: notAi, confidence, bestSource, modelVerdict, frames: frames.length, explanation: "", c2pa: null as SightengineRecord | null };
 }
 export async function POST(request: Request) {
-  const key = process.env.HIVE_DETECTION_API_KEY?.trim();
-  if (!key) return response({ error: "Media detector is not configured. Add HIVE_DETECTION_API_KEY (Hive Moderation API key with the ai_generated_media and deepfake models enabled) to the deployment environment." }, 503);
+  const apiUser = process.env.SIGHTENGINE_API_USER?.trim();
+  const apiSecret = process.env.SIGHTENGINE_API_SECRET?.trim();
+  if (!apiUser || !apiSecret) return response({ error: "Media detector is not configured. Add SIGHTENGINE_API_USER and SIGHTENGINE_API_SECRET to the deployment environment." }, 503);
 
   try {
     const form = await request.formData();
@@ -396,7 +401,8 @@ export async function POST(request: Request) {
     const mediaUrl = typeof form.get("url") === "string" ? String(form.get("url")).trim() : "";
 
     let mediaType: "image" | "video";
-    let mediaInput: string;
+    let mediaBytes: Buffer;
+    let mediaMime: string;
     let forensic: ForensicSignals = {
       metadata: { available:false, score:0, anomaly:0, fields:[], software:null, camera:null, c2pa:false },
       frequency: { available:false, score:0, low_energy:0, mid_energy:0, high_energy:0, high_frequency_ratio:0, note:"Unavailable." },
@@ -408,28 +414,28 @@ export async function POST(request: Request) {
       if (!IMAGE_TYPES.has(file.type) && !VIDEO_TYPES.has(file.type)) return response({ error: "Unsupported media type. Use JPG, PNG, WEBP, GIF, MP4, WEBM, M4V, MOV, AVI, MKV or WMV." }, 415);
       mediaType = IMAGE_TYPES.has(file.type) ? "image" : "video";
       const bytes = Buffer.from(await file.arrayBuffer());
-      mediaInput = `data:${file.type};base64,${bytes.toString("base64")}`;
+      mediaBytes = bytes;
+      mediaMime = file.type;
       forensic = await runForensics(bytes, file.type);
     } else if (mediaUrl) {
       let url: URL;
       try { url = new URL(mediaUrl); } catch { return response({ error: "Invalid media URL." }, 400); }
       if (!/^https?:$/.test(url.protocol)) return response({ error: "Only HTTP/HTTPS media URLs are supported." }, 400);
       mediaType = /\.(mp4|webm|m4v|mov|avi|mkv|wmv)(?:\?|$)/i.test(url.pathname) ? "video" : "image";
-      if (mediaType === "image") {
-        const remote = await fetchRemoteImage(mediaUrl);
-        forensic = await runForensics(remote.buffer, remote.mime);
-        mediaInput = "data:" + remote.mime + ";base64," + remote.buffer.toString("base64");
-      } else {
-        mediaInput = mediaUrl;
-      }
+      const allowedTypes = mediaType === "image" ? IMAGE_TYPES : VIDEO_TYPES;
+      const maxBytes = mediaType === "image" ? MAX_REMOTE_BYTES : MAX_REMOTE_VIDEO_BYTES;
+      const remote = await fetchRemoteMedia(mediaUrl, allowedTypes, maxBytes);
+      mediaBytes = remote.buffer;
+      mediaMime = remote.mime;
+      if (mediaType === "image") forensic = await runForensics(remote.buffer, remote.mime);
     } else {
       return response({ error: "Upload an image/video or provide a public media URL." }, 400);
     }
 
-    const analysis = await runHiveDetection(key, mediaType, mediaInput);
-    forensic.face = { available: true, score: analysis.deepfake, source: "Hive dedicated deepfake classifier" };
+    const analysis = await runSightengineDetection(apiUser, apiSecret, mediaType, mediaBytes, mediaMime);
+    forensic.face = { available: true, score: analysis.deepfake, source: "Sightengine dedicated deepfake classifier" };
 
-    const fused = fuseVerdict(analysis.ai, analysis.notAi, analysis.deepfake, forensic, analysis.modelVerdict, analysis.confidence);
+    const fused = fuseVerdict(analysis.ai, analysis.deepfake);
     return response({
       verdict: fused.verdict,
       explanation: fused.explanation + (analysis.explanation ? ` Visual model note: ${analysis.explanation}` : ""),
@@ -441,6 +447,8 @@ export async function POST(request: Request) {
         frames_analyzed: analysis.frames,
         model_verdict: analysis.modelVerdict,
         model_confidence: Math.round(analysis.confidence * 10) / 10,
+        source_confidence: Math.round(analysis.sourceConfidence * 10) / 10,
+        non_ai_source: Math.round(analysis.nonAiSource * 10) / 10,
       },
       forensic,
       likely_source: analysis.bestSource,
@@ -451,7 +459,7 @@ export async function POST(request: Request) {
         action: typeof analysis.c2pa?.actions_action === "string" ? analysis.c2pa.actions_action : null,
         digital_source_type: typeof analysis.c2pa?.actions_digital_source_type === "string" ? analysis.c2pa.actions_digital_source_type : null,
       },
-      detector: "Hive AI-generated media classifier + deepfake model + metadata + DCT frequency forensics",
+      detector: "Sightengine genai + deepfake models, with metadata and DCT frequency forensics",
     } satisfies MediaAnalysis);
   } catch (error) {
     console.error("Media analysis route failed.", error);
