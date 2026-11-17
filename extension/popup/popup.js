@@ -62,7 +62,7 @@ $("analyze").addEventListener("click", async () => {
     if (!tab?.id || !/^https?:/.test(tab.url || "")) throw new Error("This page cannot be analyzed. Open a normal HTTP or HTTPS webpage.");
     const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractPage });
     if (!page?.text || page.text.length < 40) throw new Error("Not enough readable text found. Select a longer claim or open an article.");
-    const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: page.url }) });
+    const response = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: page.url, text: page.text, title: page.title }) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Analysis request failed.");
     await chrome.storage.local.set({ latestAnalysis: { ...data, analyzedAt: Date.now() } });
