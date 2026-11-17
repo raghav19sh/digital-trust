@@ -9,8 +9,6 @@ import {
   FileText,
   Info,
   Link2,
-  Search,
-  ShieldCheck,
 } from "lucide-react";
 
 type Level = "good" | "warn" | "bad";
