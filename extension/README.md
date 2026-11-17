@@ -37,7 +37,8 @@ No content script is registered, no automatic page monitoring runs, and no webpa
 ## Current limitations
 
 - The existing API fetches article URLs itself. Pages that block server-side fetching, require login, or render content only in the browser may not be analyzable through URL mode.
-- Selected-text analysis uses the existing text-only API input; the current backend therefore has no source-domain signal for that request.
+- Selected-text analysis sends the selected passage together with its source URL. The backend analyzes the supplied passage without replacing it with a server-fetched full page, while retaining the page domain as a source-reputation signal.
+- The API reports evidence coverage and calculates the weighted score only from available signals. A search with no matching fact-check or independent coverage is shown as unavailable rather than assigned a misleading neutral score.
 - Image/video and OCR analysis are not included in this MVP.
 - The UI displays the existing API's trust score as a triage signal, not a truth verdict.
 
